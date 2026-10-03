@@ -1,4 +1,5 @@
 #include "window.h"
+#include "positionpicker.h"
 #include <QApplication>
 #include <QButtonGroup>
 #include <QDialog>
@@ -121,10 +122,14 @@ void StepEditor::updateFields() {
     fixed->setVisible(mouseInput); visible(positionRow,a==Action::Move || (mouseInput && fixed->isChecked()));
 }
 void StepEditor::capture(bool position) {
-    CaptureDialog d(position,this);
-    if(d.exec()!=QDialog::Accepted) return;
-    if(position) { loading=true; x->setValue(d.point.x()); y->setValue(d.point.y()); fixed->setChecked(true); loading=false; }
-    else { loading=true; setKey(d.key); loading=false; }
+    QWidget *owner=window();
+    bool accepted=false; QPoint point; InputKey key;
+    if(position) { PositionPicker picker(owner); accepted=picker.exec()==QDialog::Accepted; point=picker.position(); }
+    else { CaptureDialog dialog(false,this); accepted=dialog.exec()==QDialog::Accepted; key=dialog.key; }
+    if(owner->isVisible()) { owner->raise(); owner->activateWindow(); SetForegroundWindow(reinterpret_cast<HWND>(owner->winId())); }
+    if(!accepted) return;
+    if(position) { loading=true; x->setValue(point.x()); y->setValue(point.y()); fixed->setChecked(true); loading=false; }
+    else { loading=true; setKey(key); loading=false; }
     updateFields(); emit changed();
 }
 
@@ -204,7 +209,7 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
     )"));
     auto *central=new QWidget; setCentralWidget(central); auto *outer=new QHBoxLayout(central); outer->setContentsMargins(24,20,24,18);
-    auto *workspace=new QWidget; workspace->setObjectName("workspace"); workspace->setMaximumWidth(840); workspace->setMaximumHeight(660);
+    auto *workspace=new QWidget; workspace->setObjectName("workspace"); workspace->setMaximumWidth(1120); workspace->setMaximumHeight(900);
     outer->addStretch(); outer->addWidget(workspace,1); outer->addStretch();
     auto *root=new QVBoxLayout(workspace); root->setContentsMargins(0,0,0,0); root->setSpacing(16);
     auto *header=new QHBoxLayout; header->addWidget(label(QStringLiteral("点序"),"brand")); header->addStretch();
@@ -294,7 +299,7 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         else if(recording) endRecording();
         else if(engine.running()) engine.stop(); else start();
     });
-    connect(tabs,&QTabWidget::currentChanged,this,[this,workspace](int index) { workspace->setMaximumWidth(index==1?1120:840); workspace->setMaximumHeight(index==1?1000:660); roundsRow->setVisible(index==1); rounds->setEnabled(index==1 && !engine.running() && !recording); });
+    connect(tabs,&QTabWidget::currentChanged,this,[this](int index) { roundsRow->setVisible(index==1); rounds->setEnabled(index==1 && !engine.running() && !recording); });
     Step initial; initial.action=Action::Repeat; initial.count=0; quick->setValue(initial);
     Step first; first.action=Action::Click; refreshItem(new QListWidgetItem(flow),first);
     Step wait; wait.action=Action::Wait; wait.duration=500; refreshItem(new QListWidgetItem(flow),wait); flow->setCurrentRow(0);

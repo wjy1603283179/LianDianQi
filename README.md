@@ -56,7 +56,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```powershell
 python scripts\prepare-licenses.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\package.ps1
-python tests\native_smoke.py --exe dist\DianXu-1.0.2-windows-x64\LianDianQi.exe
+python tests\native_smoke.py --exe dist\DianXu-1.0.3-windows-x64\LianDianQi.exe
 ```
 
 便携包包含运行依赖、示例、接入脚本、使用说明和第三方许可。ZIP 附有 SHA-256 校验文件。

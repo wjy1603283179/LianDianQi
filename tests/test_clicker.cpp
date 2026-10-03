@@ -1,4 +1,5 @@
 #include "window.h"
+#include "positionpicker.h"
 #include <QTest>
 #include <QSignalSpy>
 #include <QJsonDocument>
@@ -11,6 +12,10 @@
 #include <QVBoxLayout>
 #include <QStyleFactory>
 #include <QStyleOptionComboBox>
+#include <QTabBar>
+#include <QScreen>
+#include <QMouseEvent>
+#include <QWindow>
 
 class FakeInput : public InputSink {
 public:
@@ -22,6 +27,12 @@ public:
         events<<QString("%1:%2").arg(k.code).arg(down?"down":"up"); return true;
     }
     bool move(const QPoint &p,QString &) override { events<<QString("move:%1,%2").arg(p.x()).arg(p.y()); return true; }
+};
+class ClickTarget : public QWidget {
+public:
+    int clicks=0;
+protected:
+    void mousePressEvent(QMouseEvent *event) override { ++clicks; event->accept(); }
 };
 class Tests : public QObject {
     Q_OBJECT
@@ -186,6 +197,69 @@ private slots:
             tabs->setCurrentIndex(2); QTest::qWait(100); w.grab().save(visualOutput+"/settings-maximized.png");
             auto *combo=w.findChild<QComboBox *>("quickAction"); tabs->setCurrentIndex(0); combo->showPopup(); QTest::qWait(100);
             combo->view()->window()->grab().save(visualOutput+"/action-dropdown.png"); combo->hidePopup();
+        }
+        w.close();
+    }
+    void pageSwitchKeepsNavigationAndControlsStationary() {
+        Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
+        auto rect=[&w](QWidget *widget) { return QRect(widget->mapTo(&w,QPoint()),widget->size()); };
+        for(const QSize size:{QSize(800,480),QSize(980,680),QSize(2560,1440)}) {
+            w.resize(size); tabs->setCurrentIndex(0); QCoreApplication::processEvents();
+            const QRect navigation=rect(tabs->tabBar()),brand=rect(w.findChild<QLabel *>("brand")),start=rect(w.findChild<QPushButton *>("primary")),delay=rect(w.findChild<TimeField *>("startDelay"));
+            for(int page:{1,2,0,1,0,2,0}) {
+                tabs->setCurrentIndex(page); QCoreApplication::processEvents();
+                QCOMPARE(rect(tabs->tabBar()),navigation); QCOMPARE(rect(w.findChild<QLabel *>("brand")),brand);
+                QCOMPARE(rect(w.findChild<QPushButton *>("primary")),start); QCOMPARE(rect(w.findChild<TimeField *>("startDelay")),delay);
+            }
+        }
+        w.close();
+    }
+    void pickerWaitsForReleaseAndEscPreservesCoordinates() {
+        QWidget owner; owner.show(); PositionPicker picker(&owner); POINT saved; QVERIFY(GetPhysicalCursorPos(&saved));
+        auto restore=qScopeGuard([&] { SetPhysicalCursorPos(saved.x,saved.y); });
+        QPoint expected;
+        QTimer::singleShot(5000,&picker,&QDialog::reject);
+        QTimer::singleShot(0,&picker,[&] {
+            QTest::mousePress(&picker,Qt::LeftButton,Qt::NoModifier,QPoint(50,50)); QVERIFY(picker.isVisible());
+            const qreal scale=picker.devicePixelRatioF(); POINT point{qRound(50*scale),qRound(50*scale)};
+            QVERIFY(ClientToScreen(reinterpret_cast<HWND>(picker.winId()),&point) || GetPhysicalCursorPos(&point)); expected=QPoint(point.x,point.y);
+            QTest::mouseRelease(&picker,Qt::LeftButton,Qt::NoModifier,QPoint(70,70));
+        });
+        QCOMPARE(picker.exec(),int(QDialog::Accepted)); QCOMPARE(picker.position(),expected); QVERIFY(!picker.isVisible());
+        Window w(nullptr,true); w.show(); auto *editor=w.findChild<StepEditor *>(); Step step; step.fixedPosition=true; step.position=QPoint(-123,456); editor->setValue(step); QSignalSpy changed(editor,&StepEditor::changed);
+        QTimer::singleShot(5000,&w,[&] { if(auto *dialog=QApplication::activeModalWidget()) dialog->close(); });
+        QTimer::singleShot(0,&w,[&] { auto *dialog=qobject_cast<PositionPicker *>(QApplication::activeModalWidget()); QVERIFY(dialog); QTest::keyClick(dialog,Qt::Key_Escape); });
+        w.findChild<QPushButton *>("quickPositionCapture")->click(); QCOMPARE(editor->value().position,step.position); QCOMPARE(changed.count(),0); QVERIFY(w.isVisible()); w.close();
+    }
+    void nativePickerBlocksUnderlyingClickAndRestoresWindow() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend; run separately with QT_QPA_PLATFORM=windows.");
+        POINT saved; QVERIFY(GetPhysicalCursorPos(&saved)); HWND foreground=GetForegroundWindow();
+        auto restore=qScopeGuard([&] { SetPhysicalCursorPos(saved.x,saved.y); if(foreground) SetForegroundWindow(foreground); });
+        ClickTarget target; target.resize(260,160); target.move(40,40); target.show();
+        Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
+        QPoint selected;
+        for(auto *screen:QApplication::screens()) for(int page:{0,1}) {
+            target.windowHandle()->setScreen(screen); target.move(screen->geometry().topLeft()+QPoint(40,40));
+            if(page==1) w.showMaximized();
+            tabs->setCurrentIndex(page); QCoreApplication::processEvents();
+            const bool originalMaximized=w.isMaximized();
+            QTimer::singleShot(5000,&w,[&] { if(auto *dialog=QApplication::activeModalWidget()) dialog->close(); });
+            QTimer::singleShot(150,&w,[&] {
+                auto *picker=qobject_cast<PositionPicker *>(QApplication::activeModalWidget()); QVERIFY(picker);
+                RECT bounds; QVERIFY(GetWindowRect(reinterpret_cast<HWND>(target.winId()),&bounds));
+                selected=QPoint((bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2);
+                INPUT click[3]={}; for(auto &event:click) event.type=INPUT_MOUSE;
+                click[0].mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;
+                click[0].mi.dx=LONG((qint64(selected.x()-GetSystemMetrics(SM_XVIRTUALSCREEN))*65536+32768)/GetSystemMetrics(SM_CXVIRTUALSCREEN));
+                click[0].mi.dy=LONG((qint64(selected.y()-GetSystemMetrics(SM_YVIRTUALSCREEN))*65536+32768)/GetSystemMetrics(SM_CYVIRTUALSCREEN));
+                click[1].mi.dwFlags=MOUSEEVENTF_LEFTDOWN; click[2].mi.dwFlags=MOUSEEVENTF_LEFTUP;
+                QCOMPARE(SendInput(3,click,sizeof(INPUT)),UINT(3));
+            });
+            auto *button=w.findChild<QPushButton *>(page==0?"quickPositionCapture":"stepPositionCapture"); button->click();
+            QCOMPARE(target.clicks,0); QCOMPARE(w.findChild<QSpinBox *>(page==0?"quickX":"stepX")->value(),selected.x());
+            QCOMPARE(w.findChild<QSpinBox *>(page==0?"quickY":"stepY")->value(),selected.y());
+            QTRY_COMPARE(GetForegroundWindow(),reinterpret_cast<HWND>(w.winId())); QVERIFY(w.isVisible()); QCOMPARE(w.isMaximized(),originalMaximized); QCOMPARE(tabs->currentIndex(),page);
+            for(auto *widget:QApplication::topLevelWidgets()) QVERIFY(!widget->objectName().startsWith("positionPicker"));
         }
         w.close();
     }
