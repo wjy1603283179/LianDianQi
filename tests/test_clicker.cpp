@@ -118,6 +118,19 @@ private slots:
         QVERIFY(w.loadScript(f.fileName())); QCOMPARE(w.currentScript().json(),s.json());
         w.close(); QVERIFY(!w.execution().timerActive()); QVERIFY(!w.execution().running());
     }
+    void timeUnitsPreserveScriptTiming() {
+        StepEditor editor(false); Step s; s.action=Action::Wait; s.duration=1234; editor.setValue(s);
+        auto *time=editor.findChild<TimeField *>("stepDuration"); QVERIFY(time);
+        auto *units=time->findChild<QComboBox *>("unit"); auto *number=time->findChild<QDoubleSpinBox *>("number");
+        QCOMPARE(units->currentText(),QString("s")); QCOMPARE(number->value(),1.234);
+        units->setCurrentIndex(0); QCOMPARE(number->value(),1234.0); QCOMPARE(editor.value().duration,1234);
+        units->setCurrentIndex(2); QCOMPARE(editor.value().duration,1234);
+        number->setValue(0.125); QCOMPARE(editor.value().duration,7500);
+        units->setCurrentIndex(1); QCOMPARE(number->value(),7.5); QCOMPARE(editor.value().duration,7500);
+        number->setValue(0); QCOMPARE(editor.value().duration,0); QVERIFY(number->specialValueText().isEmpty());
+        TimeField interval(5,3600000,5); interval.findChild<QComboBox *>("unit")->setCurrentIndex(2); QCOMPARE(interval.value(),5);
+        interval.setValue(3600000); QCOMPARE(interval.value(),3600000);
+    }
     void recordingBalancesAndSkipsAutorepeat() {
         Window w(nullptr,true); w.show(); auto *list=w.findChild<QListWidget *>("flow"); list->clear();
         auto *tabs=w.findChild<QTabWidget *>("tabs"); tabs->setCurrentIndex(1);

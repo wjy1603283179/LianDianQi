@@ -1,5 +1,6 @@
 #pragma once
 #include "engine.h"
+#include "controls.h"
 #include <QMainWindow>
 #include <QComboBox>
 #include <QCheckBox>
@@ -24,7 +25,8 @@ private:
     void capture(bool position);
     void setKey(const InputKey &);
     QComboBox *action, *input;
-    QSpinBox *interval, *duration, *count, *x, *y;
+    TimeField *interval, *duration;
+    QSpinBox *count, *x, *y;
     QCheckBox *fixed;
     QPushButton *captureKey, *capturePosition;
     QWidget *inputRow, *intervalRow, *durationRow, *countRow, *positionRow;
@@ -70,7 +72,8 @@ private:
     QListWidget *flow;
     QLabel *status, *message, *stats;
     QPushButton *startButton, *stopButton, *recordButton;
-    QSpinBox *delay, *rounds;
+    TimeField *delay;
+    QSpinBox *rounds;
     QKeySequenceEdit *toggleShortcut, *stopShortcut, *recordShortcut;
     QCheckBox *minimizeOnStart;
     bool recording=false, closing=false, testMode=false;

@@ -14,3 +14,6 @@ image.save(root / "assets" / "app.ico", sizes=[(16,16),(24,24),(32,32),(48,48),(
 arrow = Image.new("RGBA", (48, 48))
 ImageDraw.Draw(arrow).line((10, 18, 24, 31, 38, 18), fill="#798397", width=5)
 arrow.resize((12, 12), Image.Resampling.LANCZOS).save(root / "assets" / "chevron.png")
+up = Image.new("RGBA", (48, 48))
+ImageDraw.Draw(up).line((10, 30, 24, 17, 38, 30), fill="#798397", width=5)
+up.resize((12, 12), Image.Resampling.LANCZOS).save(root / "assets" / "chevron-up.png")
