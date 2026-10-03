@@ -1,7 +1,32 @@
 #pragma once
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QLineEdit>
+#include <QKeySequence>
 #include <QWidget>
+
+class ComboBox : public QComboBox {
+public:
+    explicit ComboBox(QWidget *parent=nullptr);
+};
+
+class ShortcutField : public QLineEdit {
+    Q_OBJECT
+public:
+    explicit ShortcutField(const QKeySequence &sequence, QWidget *parent=nullptr);
+    QKeySequence keySequence() const { return sequence; }
+    void setKeySequence(const QKeySequence &value);
+signals:
+    void keySequenceChanged(const QKeySequence &sequence);
+    void editingChanged(bool editing);
+protected:
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
+private:
+    void display();
+    QKeySequence sequence;
+};
 
 class TimeField : public QWidget {
     Q_OBJECT

@@ -44,6 +44,7 @@ public:
     ~Hotkeys() override;
     bool set(const QKeySequence &toggle, const QKeySequence &stop, const QKeySequence &record, QString &error);
     void clear();
+    bool setPaused(bool paused, QString &error);
     QKeySequence sequence(int id) const { return current.value(id); }
     bool nativeEventFilter(const QByteArray &, void *, qintptr *) override;
     static bool decode(const QKeySequence &, UINT &modifiers, UINT &vk);
@@ -51,4 +52,5 @@ signals:
     void triggered(int id); // 1 toggle, 2 stop, 3 recording
 private:
     QHash<int, QKeySequence> current;
+    bool paused=false;
 };

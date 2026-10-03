@@ -3,6 +3,14 @@
 #include <QSignalSpy>
 #include <QJsonDocument>
 #include <QTemporaryDir>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QSettings>
+#include <QScopeGuard>
+#include <QDir>
+#include <QVBoxLayout>
+#include <QStyleFactory>
+#include <QStyleOptionComboBox>
 
 class FakeInput : public InputSink {
 public:
@@ -18,6 +26,7 @@ public:
 class Tests : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase() { QApplication::setStyle(QStyleFactory::create("Fusion")); }
     void roundTrip() {
         Script s; for(int i=0;i<9;++i) { Step p; p.action=Action(i); s.steps.append(p); }
         s.steps.insert(8,Step{}); // Nonempty loop body.
@@ -107,6 +116,83 @@ private slots:
         UnregisterHotKey(nullptr,50);
         QVERIFY(!RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_SHIFT,VK_F19));
         h.clear(); QVERIFY(RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_SHIFT,VK_F19)); UnregisterHotKey(nullptr,51);
+    }
+    void clearedHotkeysAndEditingPause() {
+        UINT m,v; QVERIFY(!Hotkeys::decode(QKeySequence("Esc"),m,v)); QVERIFY(!Hotkeys::decode(QKeySequence("Ctrl+Esc"),m,v));
+        Hotkeys h; QString error;
+        QVERIFY(h.set(QKeySequence("Ctrl+Alt+F19"),QKeySequence(),QKeySequence(),error));
+        QVERIFY(h.setPaused(true,error)); QVERIFY(RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT,VK_F19));
+        QVERIFY(!h.setPaused(false,error)); UnregisterHotKey(nullptr,51); QVERIFY(h.setPaused(false,error));
+        QVERIFY(!RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT,VK_F19));
+        QVERIFY(h.set(QKeySequence(),QKeySequence(),QKeySequence(),error));
+        QVERIFY(h.sequence(1).isEmpty()); QVERIFY(RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT,VK_F19)); UnregisterHotKey(nullptr,51);
+    }
+    void shortcutCaptureIsImmediateAndEscClears() {
+        QWidget parent; QVBoxLayout layout(&parent); auto *field=new ShortcutField(QKeySequence("F19")); layout.addWidget(field); parent.show(); parent.activateWindow();
+        field->setFocus(); QCoreApplication::processEvents(); QSignalSpy changed(field,&ShortcutField::keySequenceChanged);
+        QTest::keyClick(field,Qt::Key_F20,Qt::ControlModifier|Qt::ShiftModifier);
+        QCOMPARE(field->keySequence(),QKeySequence("Ctrl+Shift+F20")); QCOMPARE(changed.count(),1); QVERIFY(!field->hasFocus());
+        field->setFocus(); QTest::keyClick(field,Qt::Key_Escape); QVERIFY(field->keySequence().isEmpty()); QCOMPARE(changed.count(),2);
+        field->setFocus(); QTest::keyPress(field,Qt::Key_Control); QVERIFY(field->keySequence().isEmpty()); QTest::keyRelease(field,Qt::Key_Control);
+    }
+    void shortcutClearPersistsAcrossRestart() {
+        QTemporaryDir dir; auto previousFormat=QSettings::defaultFormat(); QString previousOrg=QCoreApplication::organizationName(),previousApp=QCoreApplication::applicationName();
+        auto restore=qScopeGuard([&] { QSettings::setDefaultFormat(previousFormat); QCoreApplication::setOrganizationName(previousOrg); QCoreApplication::setApplicationName(previousApp); });
+        QSettings::setDefaultFormat(QSettings::IniFormat); QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,dir.path());
+        QCoreApplication::setOrganizationName("DianXuTests"); QCoreApplication::setApplicationName("ShortcutPersistence");
+        { QSettings st; st.setValue("toggle","Ctrl+Shift+F19"); st.setValue("stop","Ctrl+Shift+F20"); st.setValue("record","Ctrl+Shift+F21"); }
+        { Window w; w.show(); w.findChild<QTabWidget *>("tabs")->setCurrentIndex(2); auto *field=w.findChild<ShortcutField *>("toggleShortcut");
+          field->setFocus(); QCoreApplication::processEvents(); QTest::keyClick(field,Qt::Key_Escape); QVERIFY(field->keySequence().isEmpty());
+          QVERIFY(RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_SHIFT,VK_F19)); UnregisterHotKey(nullptr,51); w.close(); }
+        { QSettings st; QVERIFY(st.contains("toggle")); QVERIFY(st.value("toggle").toString().isEmpty()); }
+        { Window w; QVERIFY(w.findChild<ShortcutField *>("toggleShortcut")->keySequence().isEmpty()); QCOMPARE(w.findChild<ShortcutField *>("stopShortcut")->keySequence(),QKeySequence("Ctrl+Shift+F20")); w.close(); }
+    }
+    void shortcutResetRestoresOnlySelectedDefault() {
+        Window w(nullptr,true); auto *toggle=w.findChild<ShortcutField *>("toggleShortcut"),*stop=w.findChild<ShortcutField *>("stopShortcut"),*record=w.findChild<ShortcutField *>("recordShortcut");
+        toggle->setKeySequence(QKeySequence("Ctrl+Alt+F19")); stop->setKeySequence(QKeySequence("Ctrl+Alt+F20")); record->setKeySequence(QKeySequence("Ctrl+Alt+F21"));
+        w.findChild<QPushButton *>("toggleShortcutReset")->click(); QCOMPARE(toggle->keySequence(),QKeySequence("F6"));
+        QCOMPARE(stop->keySequence(),QKeySequence("Ctrl+Alt+F20")); QCOMPARE(record->keySequence(),QKeySequence("Ctrl+Alt+F21")); w.close();
+    }
+    void responsiveCoordinatesAndPageOptions() {
+        Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
+        auto *quick=w.findChild<StepEditor *>(); auto *fixed=w.findChild<QCheckBox *>("quickFixed"); auto *rounds=w.findChild<QSpinBox *>("scriptRounds");
+        QVERIFY(w.findChild<QLineEdit *>("quickInput")->isReadOnly()); QVERIFY(!w.findChild<QComboBox *>("quickInput")); fixed->setChecked(true);
+        const QString visualOutput=qEnvironmentVariable("LIANDIANQI_VISUAL_OUTPUT"); if(!visualOutput.isEmpty()) QDir().mkpath(visualOutput);
+        auto verifyCoordinates=[&w](const char *prefix,const char *areaName) {
+            auto *area=w.findChild<QScrollArea *>(areaName); auto *pick=w.findChild<QPushButton *>(QString(prefix)+"PositionCapture"); auto *x=w.findChild<QSpinBox *>(QString(prefix)+"X"),*y=w.findChild<QSpinBox *>(QString(prefix)+"Y");
+            area->ensureWidgetVisible(pick,0,0); QCoreApplication::processEvents();
+            QVERIFY(pick->isVisible()); QVERIFY(pick->height()>=pick->minimumSizeHint().height());
+            QVERIFY(area->viewport()->rect().contains(QRect(pick->mapTo(area->viewport(),QPoint()),pick->size())));
+            for(auto *coordinate:{x,y}) { QCOMPARE(coordinate->buttonSymbols(),QAbstractSpinBox::NoButtons); QVERIFY(coordinate->height()>=coordinate->minimumSizeHint().height()); QVERIFY(coordinate->width()<=350); }
+        };
+        for(const QSize size:{QSize(800,480),QSize(980,680),QSize(2560,1440)}) {
+            w.resize(size); tabs->setCurrentIndex(0); QCoreApplication::processEvents(); QVERIFY(!rounds->isVisible());
+            verifyCoordinates("quick","quickScroll"); QVERIFY(w.findChild<QWidget *>("workspace")->width()<=1120); QVERIFY(quick->width()<=732);
+            for(auto *time:w.findChildren<TimeField *>()) if(time->isVisible()) {
+                auto *unit=time->findChild<QComboBox *>("unit"); QStyleOptionComboBox option; option.initFrom(unit);
+                const QRect text=unit->style()->subControlRect(QStyle::CC_ComboBox,&option,QStyle::SC_ComboBoxEditField,unit);
+                QVERIFY2(text.width()>=unit->fontMetrics().horizontalAdvance("min"),qPrintable(QString("unit text area %1 px, label %2 px, widget %3 px").arg(text.width()).arg(unit->fontMetrics().horizontalAdvance("min")).arg(unit->width())));
+            }
+            if(!visualOutput.isEmpty()) w.grab().save(visualOutput+QString("/quick-%1.png").arg(size.width()));
+            Script s; Step step; step.action=Action::Repeat; step.fixedPosition=true; step.position=QPoint(-1787,272); s.steps={step}; w.setScript(s); QCoreApplication::processEvents(); QVERIFY(rounds->isVisible());
+            verifyCoordinates("step","stepScroll"); QCOMPARE(w.currentScript().steps[0].position,QPoint(-1787,272));
+            if(!visualOutput.isEmpty()) w.grab().save(visualOutput+QString("/flow-%1.png").arg(size.width()));
+            tabs->setCurrentIndex(2); QCoreApplication::processEvents(); QVERIFY(!rounds->isVisible());
+            if(!visualOutput.isEmpty()) w.grab().save(visualOutput+QString("/settings-%1.png").arg(size.width()));
+        }
+        if(!visualOutput.isEmpty()) {
+            w.showMaximized(); tabs->setCurrentIndex(0); QTest::qWait(100); verifyCoordinates("quick","quickScroll"); w.grab().save(visualOutput+"/quick-maximized.png");
+            tabs->setCurrentIndex(1); QTest::qWait(100); verifyCoordinates("step","stepScroll"); w.grab().save(visualOutput+"/flow-maximized.png");
+            tabs->setCurrentIndex(2); QTest::qWait(100); w.grab().save(visualOutput+"/settings-maximized.png");
+            auto *combo=w.findChild<QComboBox *>("quickAction"); tabs->setCurrentIndex(0); combo->showPopup(); QTest::qWait(100);
+            combo->view()->window()->grab().save(visualOutput+"/action-dropdown.png"); combo->hidePopup();
+        }
+        w.close();
+    }
+    void capturedKeyDisplayPreservesPhysicalMetadata() {
+        StepEditor editor(true); InputKey captured{false,VK_RCONTROL,0x1d,true}; Step step; step.key=captured; editor.setValue(step);
+        QCOMPARE(editor.value().key,captured); QCOMPARE(editor.findChild<QLineEdit *>("quickInput")->text(),captured.name());
+        Step parsed; QString error; QVERIFY(Step::parse(editor.value().json(),parsed,error)); QCOMPARE(parsed.key,captured);
     }
     void uiEditAndPersist() {
         Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs"); tabs->setCurrentIndex(1);

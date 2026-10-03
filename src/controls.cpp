@@ -1,7 +1,47 @@
 #include "controls.h"
 #include <QHBoxLayout>
 #include <QSignalBlocker>
+#include <QKeyEvent>
+#include <QFocusEvent>
+#include <QListView>
 #include <cmath>
+
+ComboBox::ComboBox(QWidget *parent) : QComboBox(parent) {
+    auto *list=new QListView;
+    list->setUniformItemSizes(true); list->setSpacing(2);
+    setView(list); setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    setMinimumContentsLength(3); setMaxVisibleItems(10);
+}
+
+ShortcutField::ShortcutField(const QKeySequence &value,QWidget *parent) : QLineEdit(parent),sequence(value) {
+    setReadOnly(true); setContextMenuPolicy(Qt::NoContextMenu);
+    setFocusPolicy(Qt::ClickFocus); // Opening the settings tab must not begin shortcut capture.
+    setMinimumWidth(180); setPlaceholderText(QStringLiteral("点击设置"));
+    setAccessibleName(QStringLiteral("快捷键")); display();
+}
+void ShortcutField::display() { setText(sequence.toString(QKeySequence::NativeText)); }
+void ShortcutField::setKeySequence(const QKeySequence &value) {
+    if(sequence==value) { display(); return; }
+    sequence=value; display(); emit keySequenceChanged(sequence);
+}
+void ShortcutField::focusInEvent(QFocusEvent *event) {
+    QLineEdit::focusInEvent(event); setText(QString()); setPlaceholderText(QStringLiteral("按下快捷键"));
+    emit editingChanged(true);
+}
+void ShortcutField::focusOutEvent(QFocusEvent *event) {
+    QLineEdit::focusOutEvent(event); setPlaceholderText(QStringLiteral("点击设置")); display();
+    emit editingChanged(false);
+}
+void ShortcutField::keyPressEvent(QKeyEvent *event) {
+    if(event->isAutoRepeat()) { event->accept(); return; }
+    int key=event->key();
+    if(key==Qt::Key_Escape) { setKeySequence(QKeySequence()); clearFocus(); }
+    else if(key!=Qt::Key_Control && key!=Qt::Key_Shift && key!=Qt::Key_Alt && key!=Qt::Key_Meta && key!=Qt::Key_AltGr && key!=Qt::Key_unknown) {
+        auto modifiers=event->modifiers() & (Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier|Qt::MetaModifier);
+        setKeySequence(QKeySequence(QKeyCombination(modifiers,Qt::Key(key)))); clearFocus();
+    }
+    event->accept();
+}
 
 class CompactDoubleSpinBox : public QDoubleSpinBox {
 protected:
@@ -21,8 +61,8 @@ TimeField::TimeField(int low,int high,int initial,QWidget *parent)
     auto *layout=new QHBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(8);
     number=new CompactDoubleSpinBox; number->setObjectName("number"); number->setMinimumWidth(105);
     number->setButtonSymbols(QAbstractSpinBox::UpDownArrows); number->setKeyboardTracking(false);
-    unit=new QComboBox; unit->setObjectName("unit"); unit->addItem("ms",1); unit->addItem("s",1000); unit->addItem("min",60000);
-    unit->setFixedWidth(86); unit->setToolTip(QStringLiteral("时间单位"));
+    unit=new ComboBox; unit->setObjectName("unit"); unit->addItem("ms",1); unit->addItem("s",1000); unit->addItem("min",60000);
+    unit->setFixedWidth(104); unit->setToolTip(QStringLiteral("时间单位"));
     layout->addWidget(number,1); layout->addWidget(unit);
     setValue(initial);
     connect(number,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,[this] { emit valueChanged(value()); });

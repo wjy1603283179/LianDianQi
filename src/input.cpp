@@ -1,5 +1,6 @@
 #include "input.h"
 #include <QCoreApplication>
+#include <QSet>
 
 static bool send(INPUT &input, QString &error) {
     if (SendInput(1, &input, sizeof(INPUT)) == 1) return true;
@@ -98,7 +99,7 @@ bool Hotkeys::decode(const QKeySequence &s, UINT &mod, UINT &vk) {
     if ((key>='A'&&key<='Z') || (key>='0'&&key<='9')) vk=UINT(key);
     else if (key>=Qt::Key_F1&&key<=Qt::Key_F24) vk=VK_F1+UINT(key-Qt::Key_F1);
     else switch (key) {
-    case Qt::Key_Space: vk=VK_SPACE; break; case Qt::Key_Escape: vk=VK_ESCAPE; break;
+    case Qt::Key_Space: vk=VK_SPACE; break;
     case Qt::Key_Pause: vk=VK_PAUSE; break; case Qt::Key_Insert: vk=VK_INSERT; break;
     case Qt::Key_Delete: vk=VK_DELETE; break; case Qt::Key_Home: vk=VK_HOME; break;
     case Qt::Key_End: vk=VK_END; break; case Qt::Key_PageUp: vk=VK_PRIOR; break;
@@ -109,26 +110,46 @@ bool Hotkeys::decode(const QKeySequence &s, UINT &mod, UINT &vk) {
 }
 bool Hotkeys::set(const QKeySequence &toggle, const QKeySequence &stop, const QKeySequence &record, QString &error) {
     QHash<int,QKeySequence> next {{1,toggle},{2,stop},{3,record}};
-    if (toggle==stop || toggle==record || stop==record) { error=QStringLiteral("三个快捷键必须不同"); return false; }
-    for (const auto &s : next) { UINT m,v; if (!decode(s,m,v)) { error=QStringLiteral("请使用单组字母、数字或功能键（F12 为系统保留键）"); return false; } }
+    QSet<QString> used;
+    for (const auto &s : next) {
+        if(s.isEmpty()) continue;
+        if(used.contains(s.toString(QKeySequence::PortableText))) { error=QStringLiteral("快捷键重复，请换一个"); return false; }
+        used.insert(s.toString(QKeySequence::PortableText));
+        UINT m,v; if (!decode(s,m,v)) { error=QStringLiteral("该快捷键不受支持，F12 为系统保留键"); return false; }
+    }
     auto previous=current; clear();
     for (int id : {1,2,3}) {
+        if(next[id].isEmpty()) continue;
         UINT m,v; decode(next[id],m,v);
         if (!RegisterHotKey(nullptr,id,m,v)) {
             error=QStringLiteral("%1 已被其他程序占用，原设置已恢复").arg(next[id].toString(QKeySequence::NativeText));
             clear();
             for (int oldId : previous.keys()) {
                 decode(previous[oldId],m,v);
-                if (RegisterHotKey(nullptr,oldId,m,v)) current[oldId]=previous[oldId];
+                if (paused || RegisterHotKey(nullptr,oldId,m,v)) current[oldId]=previous[oldId];
             }
             return false;
         }
         current[id]=next[id];
     }
+    if(paused) for(int id:current.keys()) UnregisterHotKey(nullptr,id);
     return true;
+}
+bool Hotkeys::setPaused(bool value,QString &error) {
+    if(paused==value) return true;
+    if(value) { for(int id:current.keys()) UnregisterHotKey(nullptr,id); paused=true; return true; }
+    for(int id:current.keys()) {
+        UINT m,v; decode(current[id],m,v);
+        if(!RegisterHotKey(nullptr,id,m,v)) {
+            for(int registered:current.keys()) UnregisterHotKey(nullptr,registered);
+            error=QStringLiteral("%1 已被其他程序占用").arg(current[id].toString(QKeySequence::NativeText));
+            return false;
+        }
+    }
+    paused=false; return true;
 }
 bool Hotkeys::nativeEventFilter(const QByteArray &, void *message, qintptr *) {
     auto *msg=static_cast<MSG *>(message);
-    if (msg->message!=WM_HOTKEY || !current.contains(int(msg->wParam))) return false;
+    if (paused || msg->message!=WM_HOTKEY || !current.contains(int(msg->wParam))) return false;
     emit triggered(int(msg->wParam)); return true;
 }

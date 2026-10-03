@@ -188,14 +188,16 @@ def run_tests(exe):
             p = launch([{"action":"hold","input":key,"durationMs":0}])
             wait_for(lambda:len(events)>baseline)
             assert events[-1][0:3] == ("keyboard",135,True)
-            assert u.GetAsyncKeyState(135) & 0x8000
+            # The low-level hook runs before Windows commits asynchronous key state.
+            # https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc
+            wait_for(lambda:u.GetAsyncKeyState(135) & 0x8000)
             assert control("--show") == 0 and p.poll() is None
             report["checks"].append("single-instance relaunch displays existing window")
             baseline = len(events)
             press(0x83) # F20: registered Stop shortcut in the isolated profile.
             wait_for(lambda:len(events)>baseline)
             assert events[-1][0:3] == ("keyboard",135,False)
-            assert not (u.GetAsyncKeyState(135) & 0x8000)
+            wait_for(lambda:not (u.GetAsyncKeyState(135) & 0x8000))
             report["checks"].append("real global Stop shortcut releases an indefinite F24 hold")
             report["idle"] = resources(p)
             baseline = len(events)
@@ -215,7 +217,7 @@ def run_tests(exe):
             close(p)
             wait_for(lambda:events[-1][2] is False)
             report["closeMilliseconds"] = round((time.perf_counter()-before_close)*1000,1)
-            assert not (u.GetAsyncKeyState(135) & 0x8000)
+            wait_for(lambda:not (u.GetAsyncKeyState(135) & 0x8000))
             assert control("--status") == 1
             assert u.RegisterHotKey(None,61,0x4000,0x83)
             u.UnregisterHotKey(None,61)
@@ -233,7 +235,7 @@ def run_tests(exe):
             u.SetWindowPos(target,c.c_void_p(-1),20,20,400,220,0x40)
             wait_for(lambda:len(events)>=baseline+8)
             assert [e[2] for e in events[baseline:baseline+8]] == [True,False]*4
-            assert all(e[3] == (120,120) for e in events[baseline:baseline+8])
+            assert all(e[3] == (120,120) for e in events[baseline:baseline+8]), events[baseline:baseline+8]
             close(p)
             report["checks"].append("four real fixed-position mouse clicks hit the test window at physical pixel (120,120)")
             u.DestroyWindow(target)
@@ -243,7 +245,8 @@ def run_tests(exe):
             wait_for(lambda:len(events)>baseline)
             assert control("--quit") == 0
             wait_for(lambda:p.poll() is not None)
-            assert p.returncode == 0 and not (u.GetAsyncKeyState(135) & 0x8000)
+            assert p.returncode == 0
+            wait_for(lambda:not (u.GetAsyncKeyState(135) & 0x8000))
             assert all(proc.poll() is not None for proc in processes)
             report["checks"].append("FloatingBall --quit command gracefully exits with no retained test processes")
             screenshot = folder / "preview.png"

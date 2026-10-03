@@ -9,7 +9,6 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
-#include <QKeySequenceEdit>
 #include <QCloseEvent>
 
 class StepEditor : public QWidget {
@@ -24,7 +23,8 @@ private:
     void updateFields();
     void capture(bool position);
     void setKey(const InputKey &);
-    QComboBox *action, *input;
+    QComboBox *action;
+    QLineEdit *input;
     TimeField *interval, *duration;
     QSpinBox *count, *x, *y;
     QCheckBox *fixed;
@@ -62,6 +62,7 @@ private:
     void settingsLoad();
     void settingsSave();
     void notice(const QString &, bool error=false);
+    void shortcutHint();
     WindowsInput sink;
     Engine engine;
     Hotkeys hotkeys;
@@ -74,7 +75,8 @@ private:
     QPushButton *startButton, *stopButton, *recordButton;
     TimeField *delay;
     QSpinBox *rounds;
-    QKeySequenceEdit *toggleShortcut, *stopShortcut, *recordShortcut;
+    ShortcutField *toggleShortcut, *stopShortcut, *recordShortcut;
+    QWidget *roundsRow;
     QCheckBox *minimizeOnStart;
     bool recording=false, closing=false, testMode=false;
     QString scriptPath;

@@ -16,6 +16,7 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStyledItemDelegate>
+#include <QScrollArea>
 #include <QTabBar>
 #include <QVBoxLayout>
 
@@ -34,10 +35,15 @@ static QWidget *row(std::initializer_list<QWidget *> widgets) {
     return w;
 }
 static QFrame *card() { auto *f=new QFrame; f->setObjectName("card"); return f; }
+static QScrollArea *makeScroll(QWidget *content,const char *name) {
+    auto *area=new QScrollArea; area->setObjectName(name); area->setWidgetResizable(true);
+    area->setFrameShape(QFrame::NoFrame); area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    area->setWidget(content); return area;
+}
 
 class CaptureDialog : public QDialog {
 public:
-    CaptureDialog(bool position, QWidget *parent) : QDialog(parent) {
+    CaptureDialog(bool position, QWidget *parent) : QDialog(parent),monitor(this) {
         setWindowTitle(position?QStringLiteral("拾取屏幕坐标"):QStringLiteral("采集输入")); setMinimumWidth(440);
         auto *l=new QVBoxLayout(this); l->setContentsMargins(28,24,28,24); l->setSpacing(18);
         l->addWidget(label(position?QStringLiteral("点击需要执行的位置"):QStringLiteral("按下任意键或鼠标按钮"),"sectionTitle"));
@@ -62,21 +68,15 @@ private:
 };
 
 StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
-    auto *form=new QFormLayout(this); form->setContentsMargins(0,0,0,0); form->setVerticalSpacing(16);
+    auto *form=new QFormLayout(this); form->setContentsMargins(0,0,0,0); form->setVerticalSpacing(16); form->setHorizontalSpacing(12);
+    form->setSizeConstraint(QLayout::SetMinimumSize); form->setLabelAlignment(Qt::AlignLeft|Qt::AlignVCenter);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    action=new QComboBox;
+    action=new ComboBox;
     for(int i=0;i<(isQuick?5:9);++i) action->addItem(actionName(Action(i)),i);
     action->setObjectName(isQuick?"quickAction":"stepAction");
     form->addRow(QStringLiteral("执行动作"),action);
-    input=new QComboBox; input->setObjectName(isQuick?"quickInput":"stepInput");
-    for(int code:{1,2,4,5,6}) { InputKey k{true,code,0,false}; input->addItem(k.name(),k.json()); }
-    for(int code='A';code<='Z';++code) { InputKey k{false,code,0,false}; input->addItem(k.name(),k.json()); }
-    for(int code='0';code<='9';++code) { InputKey k{false,code,0,false}; input->addItem(k.name(),k.json()); }
-    for(int code=8;code<=254;++code) {
-        if((code>='A'&&code<='Z') || (code>='0'&&code<='9') || code==16 || code==17 || code==18) continue;
-        InputKey k{false,code,0,false}; input->addItem(k.name(),k.json());
-    }
-    captureKey=new QPushButton(QStringLiteral("采集")); captureKey->setToolTip(QStringLiteral("采集实际键盘或鼠标输入"));
+    input=new QLineEdit; input->setObjectName(isQuick?"quickInput":"stepInput"); input->setReadOnly(true); input->setFocusPolicy(Qt::NoFocus); input->setText(currentKey.name());
+    captureKey=new QPushButton(QStringLiteral("采集")); captureKey->setObjectName(isQuick?"quickCapture":"stepCapture"); captureKey->setToolTip(QStringLiteral("采集实际键盘或鼠标输入"));
     inputRow=row({input,captureKey}); form->addRow(QStringLiteral("输入按键"),inputRow);
     interval=new TimeField(5,3600000,100); interval->setObjectName(isQuick?"quickInterval":"stepInterval");
     intervalRow=row({interval}); form->addRow(QStringLiteral("连点间隔"),intervalRow);
@@ -84,16 +84,15 @@ StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
     countRow=row({count}); form->addRow(QStringLiteral("重复次数"),countRow);
     duration=new TimeField(0,86400000,1000); duration->setObjectName(isQuick?"quickDuration":"stepDuration"); duration->setSpecialValueText(QStringLiteral("直到停止"));
     durationRow=row({duration}); form->addRow(QStringLiteral("持续时间"),durationRow);
-    fixed=new QCheckBox(QStringLiteral("固定鼠标位置")); form->addRow(QString(),fixed);
+    fixed=new QCheckBox(QStringLiteral("固定鼠标位置")); fixed->setObjectName(isQuick?"quickFixed":"stepFixed"); form->addRow(QString(),fixed);
     x=spin(-100000,100000,0); y=spin(-100000,100000,0); capturePosition=new QPushButton(QStringLiteral("拾取"));
-    x->setMinimumWidth(78); y->setMinimumWidth(78);
-    positionRow=new QWidget; auto *pl=new QVBoxLayout(positionRow); pl->setContentsMargins(0,0,0,0); pl->setSpacing(8);
-    pl->addWidget(row({label("X"),x,label("Y"),y})); pl->addWidget(capturePosition,0,Qt::AlignLeft); form->addRow(QStringLiteral("屏幕坐标"),positionRow);
+    for(auto *coordinate:{x,y}) { coordinate->setButtonSymbols(QAbstractSpinBox::NoButtons); coordinate->setProperty("coordinate",true); coordinate->setMinimumWidth(75); }
+    x->setObjectName(isQuick?"quickX":"stepX"); y->setObjectName(isQuick?"quickY":"stepY"); capturePosition->setObjectName(isQuick?"quickPositionCapture":"stepPositionCapture");
+    positionRow=new QWidget; positionRow->setObjectName("positionRow"); auto *pl=new QHBoxLayout(positionRow); pl->setContentsMargins(0,0,0,0); pl->setSpacing(8);
+    auto *xl=label("X"); auto *yl=label("Y"); xl->setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed); yl->setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed);
+    pl->addWidget(xl); pl->addWidget(x,1); pl->addSpacing(4); pl->addWidget(yl); pl->addWidget(y,1); pl->addWidget(capturePosition);
+    form->addRow(QStringLiteral("屏幕坐标"),positionRow);
     connect(action,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this] { updateFields(); if(!loading) emit changed(); });
-    connect(input,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this] {
-        QString error; InputKey k; if(InputKey::parse(input->currentData().toJsonObject(),k,error)) currentKey=k;
-        updateFields(); if(!loading) emit changed();
-    });
     for(auto *w:{interval,duration}) connect(w,&TimeField::valueChanged,this,[this] { if(!loading) emit changed(); });
     for(auto *w:{count,x,y}) connect(w,QOverload<int>::of(&QSpinBox::valueChanged),this,[this] { if(!loading) emit changed(); });
     connect(fixed,&QCheckBox::toggled,this,[this] { updateFields(); if(!loading) emit changed(); });
@@ -106,14 +105,7 @@ Step StepEditor::value() const {
     s.count=count->value(); s.fixedPosition=fixed->isChecked(); s.position=QPoint(x->value(),y->value()); return s;
 }
 void StepEditor::setKey(const InputKey &k) {
-    int found=-1;
-    for(int i=0;i<input->count();++i) {
-        QString error; InputKey item;
-        if(InputKey::parse(input->itemData(i).toJsonObject(),item,error) && item.identity()==k.identity()) { found=i; break; }
-    }
-    if(found<0) { input->addItem(k.name(),k.json()); found=input->count()-1; }
-    else input->setItemData(found,k.json());
-    input->setCurrentIndex(found); currentKey=k;
+    currentKey=k; input->setText(k.name());
 }
 void StepEditor::setValue(const Step &s) {
     loading=true; action->setCurrentIndex(int(s.action)); setKey(s.key); interval->setValue(s.interval); duration->setValue(s.duration);
@@ -139,7 +131,7 @@ void StepEditor::capture(bool position) {
 class StepDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
-    QSize sizeHint(const QStyleOptionViewItem &,const QModelIndex &) const override { return {360,86}; }
+    QSize sizeHint(const QStyleOptionViewItem &,const QModelIndex &) const override { return {240,86}; }
     void paint(QPainter *p,const QStyleOptionViewItem &o,const QModelIndex &i) const override {
         p->save(); p->setRenderHint(QPainter::Antialiasing);
         QRect r=o.rect.adjusted(4,2,-4,-10); bool selected=o.state.testFlag(QStyle::State_Selected);
@@ -148,7 +140,7 @@ public:
         p->setBrush(running?QColor("#effaf5"):selected?QColor("#f1f3ff"):Qt::white); p->drawRoundedRect(r,10,10);
         QRect badge(r.left()+12,r.top()+17,36,36); p->setPen(Qt::NoPen); p->setBrush(QColor("#e9ecfb")); p->drawRoundedRect(badge,9,9);
         p->setPen(QColor("#5564c9")); auto f=o.font; f.setBold(true); p->setFont(f); p->drawText(badge,Qt::AlignCenter,QString("%1").arg(i.row()+1,2,10,QChar('0')));
-        p->setPen(QColor("#20283c")); p->drawText(QRect(r.left()+61,r.top()+13,r.width()-74,25),Qt::AlignLeft|Qt::AlignVCenter,i.data(Qt::DisplayRole).toString());
+        p->setPen(QColor("#20283c")); p->drawText(QRect(r.left()+61,r.top()+13,r.width()-74,25),Qt::AlignLeft|Qt::AlignVCenter,p->fontMetrics().elidedText(i.data(Qt::DisplayRole).toString(),Qt::ElideRight,r.width()-74));
         f.setBold(false); f.setPointSize(9); p->setFont(f); p->setPen(QColor("#788298"));
         QString text=i.data(Qt::ToolTipRole).toString(); p->drawText(QRect(r.left()+61,r.top()+40,r.width()-74,22),Qt::AlignLeft|Qt::AlignVCenter,p->fontMetrics().elidedText(text,Qt::ElideRight,r.width()-74));
         if(i.row()+1<i.model()->rowCount()) { p->setPen(QPen(QColor("#c3cadb"),1.5)); int c=r.center().x(); p->drawLine(c,r.bottom()+1,c,r.bottom()+9); p->drawLine(c-3,r.bottom()+6,c,r.bottom()+9); p->drawLine(c+3,r.bottom()+6,c,r.bottom()+9); }
@@ -164,7 +156,7 @@ QIcon Window::appIcon() {
 }
 Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,this),hotkeys(this),monitor(this),testMode(testing) {
     monitor.setObjectName("recordingMonitor");
-    setWindowTitle(QStringLiteral("点序 · 连点器")); setWindowIcon(appIcon()); resize(980,660); setMinimumSize(920,620);
+    setWindowTitle(QStringLiteral("点序 · 连点器")); setWindowIcon(appIcon()); resize(980,680); setMinimumSize(800,480);
     setStyleSheet(QStringLiteral(R"(
         QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 10pt; color: #25304a; }
         QMainWindow { background: #f5f6fa; }
@@ -182,8 +174,10 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         QPushButton#primary:disabled { background: #afb6dc; }
         QPushButton#stop { color: #be5564; background: #fff4f5; border-color: #f0cfd5; padding: 12px 24px; }
         QPushButton#stop:disabled { color: #b9bdc8; background: #f3f4f7; border-color: #e5e8ef; }
-        QComboBox, QSpinBox, QDoubleSpinBox, QKeySequenceEdit { background: white; border: 1px solid #dce1ec; border-radius: 7px; padding: 7px 10px; min-height: 22px; }
-        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QKeySequenceEdit:focus { border-color: #6675db; }
+        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit { background: white; border: 1px solid #dce1ec; border-radius: 8px; padding: 7px 10px; min-height: 22px; }
+        QComboBox:hover { border-color: #a8b2e4; }
+        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus { border-color: #6675db; }
+        QLineEdit:read-only { background: #f8f9fd; }
         QSpinBox, QDoubleSpinBox { padding-right: 31px; selection-background-color: #e8ecff; selection-color: #25304a; }
         QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 26px; height: 18px; border: none; border-top-right-radius: 7px; background: transparent; margin: 2px 2px 0 0; }
         QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 26px; height: 18px; border: none; border-bottom-right-radius: 7px; background: transparent; margin: 0 2px 2px 0; }
@@ -191,9 +185,15 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         QSpinBox::up-button:pressed, QSpinBox::down-button:pressed, QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed { background: #dde3fb; }
         QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(:/icons/chevron-up.png); width: 10px; height: 10px; }
         QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(:/icons/chevron.png); width: 10px; height: 10px; }
-        QComboBox::drop-down { border: none; width: 23px; }
+        QSpinBox[coordinate="true"] { padding-right: 10px; }
+        QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: center right; border: none; width: 28px; margin: 4px; border-radius: 5px; background: #f2f4fa; }
+        QComboBox::drop-down:hover { background: #e8ecfb; }
         QComboBox::down-arrow { image: url(:/icons/chevron.png); width: 12px; height: 12px; }
-        QComboBox QAbstractItemView { background: white; selection-background-color: #e8ecff; selection-color: #25304a; }
+        QComboBox QAbstractItemView { background: white; border: 1px solid #dce1ec; border-radius: 8px; padding: 5px; outline: none; selection-background-color: #e8ecff; selection-color: #4c5dce; }
+        QComboBox QAbstractItemView::item { min-height: 24px; padding: 6px 10px; border-radius: 5px; }
+        QComboBox QAbstractItemView::item:hover { background: #f1f3fc; }
+        QComboBox QAbstractItemView::item:selected { background: #e8ecff; color: #4c5dce; }
+        QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
         QTabWidget::pane { border: none; background: transparent; }
         QTabBar::tab { background: #e9edf5; border: none; margin-right: 6px; border-radius: 8px; padding: 11px 22px; color: #7a849a; }
         QTabBar::tab:selected { background: #5c6bda; color: white; }
@@ -203,14 +203,19 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         QScrollBar::handle:vertical { background: #cbd1de; border-radius: 4px; min-height: 25px; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
     )"));
-    auto *central=new QWidget; setCentralWidget(central); auto *root=new QVBoxLayout(central); root->setContentsMargins(28,22,28,20); root->setSpacing(18);
+    auto *central=new QWidget; setCentralWidget(central); auto *outer=new QHBoxLayout(central); outer->setContentsMargins(24,20,24,18);
+    auto *workspace=new QWidget; workspace->setObjectName("workspace"); workspace->setMaximumWidth(840); workspace->setMaximumHeight(660);
+    outer->addStretch(); outer->addWidget(workspace,1); outer->addStretch();
+    auto *root=new QVBoxLayout(workspace); root->setContentsMargins(0,0,0,0); root->setSpacing(16);
     auto *header=new QHBoxLayout; header->addWidget(label(QStringLiteral("点序"),"brand")); header->addStretch();
     status=label(QStringLiteral("● 就绪"),"status"); header->addWidget(status); root->addLayout(header);
     tabs=new QTabWidget; tabs->setObjectName("tabs"); root->addWidget(tabs,1);
     quickPage=new QWidget; auto *ql=new QVBoxLayout(quickPage); ql->setContentsMargins(0,22,0,0); ql->setSpacing(15);
-    auto *quickBody=new QHBoxLayout; auto *qcard=card(); auto *qcl=new QVBoxLayout(qcard); qcl->setContentsMargins(24,22,24,22); qcl->setSpacing(20);
-    qcl->addWidget(label(QStringLiteral("快速任务"),"sectionTitle")); quick=new StepEditor(true); qcl->addWidget(quick); qcl->addStretch(); quickBody->addWidget(qcard,3);
-    ql->addLayout(quickBody,1);
+    auto *quickContent=new QWidget; auto *quickBody=new QVBoxLayout(quickContent); quickBody->setContentsMargins(0,0,10,0);
+    auto *qcard=card(); qcard->setMaximumWidth(780); auto *qcl=new QVBoxLayout(qcard); qcl->setContentsMargins(24,22,24,22); qcl->setSpacing(20);
+    qcl->addWidget(label(QStringLiteral("快速任务"),"sectionTitle")); quick=new StepEditor(true); qcl->addWidget(quick);
+    auto *quickCenter=new QHBoxLayout; quickCenter->addStretch(); quickCenter->addWidget(qcard,1); quickCenter->addStretch();
+    quickBody->addLayout(quickCenter); quickBody->addStretch(); ql->addWidget(makeScroll(quickContent,"quickScroll"),1);
     tabs->addTab(quickPage,QStringLiteral("快速任务"));
     flowPage=new QWidget; auto *fl=new QVBoxLayout(flowPage); fl->setContentsMargins(0,20,0,0); fl->setSpacing(14);
     auto *flowTop=new QHBoxLayout; flowTop->addWidget(label(QStringLiteral("脚本"),"sectionTitle")); flowTop->addStretch();
@@ -219,22 +224,42 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     auto *flowBody=new QHBoxLayout; auto *listCard=card(); auto *ll=new QVBoxLayout(listCard); ll->setContentsMargins(14,16,14,12);
     flow=new QListWidget; flow->setObjectName("flow"); flow->setItemDelegate(new StepDelegate(flow)); flow->setDragDropMode(QAbstractItemView::InternalMove);
     flow->setDefaultDropAction(Qt::MoveAction); flow->setSelectionMode(QAbstractItemView::SingleSelection); ll->addWidget(flow,1);
-    auto *addCombo=new QComboBox; for(int i=0;i<9;++i) addCombo->addItem(actionName(Action(i)),i);
+    auto *addCombo=new ComboBox; for(int i=0;i<9;++i) addCombo->addItem(actionName(Action(i)),i);
     auto *add=new QPushButton(QStringLiteral("＋ 添加")); auto *remove=new QPushButton(QStringLiteral("删除")); auto *duplicate=new QPushButton(QStringLiteral("复制"));
     ll->addWidget(row({addCombo,add,duplicate,remove})); flowBody->addWidget(listCard,3);
-    auto *editCard=card(); auto *el=new QVBoxLayout(editCard); el->setContentsMargins(22,20,22,20); el->setSpacing(20);
+    auto *editContent=new QWidget; auto *editBody=new QVBoxLayout(editContent); editBody->setContentsMargins(0,0,10,0);
+    auto *editCard=card(); auto *el=new QVBoxLayout(editCard); el->setContentsMargins(20,20,20,20); el->setSpacing(18);
     el->addWidget(label(QStringLiteral("步骤属性"),"sectionTitle")); editor=new StepEditor(false); el->addWidget(editor); el->addStretch();
-    flowBody->addWidget(editCard,2); fl->addLayout(flowBody,1); tabs->addTab(flowPage,QStringLiteral("编排脚本"));
+    editBody->addWidget(editCard); editBody->addStretch(); auto *stepScroll=makeScroll(editContent,"stepScroll"); stepScroll->setMinimumWidth(380);
+    flowBody->addWidget(stepScroll,2); fl->addLayout(flowBody,1); tabs->addTab(flowPage,QStringLiteral("编排脚本"));
     auto *settings=new QWidget; auto *sl=new QVBoxLayout(settings); sl->setContentsMargins(0,22,0,0); sl->setSpacing(18);
-    auto *scard=card(); auto *scl=new QVBoxLayout(scard); scl->setContentsMargins(24,22,24,24); scl->setSpacing(16);
+    auto *scard=card(); scard->setMaximumWidth(780); auto *scl=new QVBoxLayout(scard); scl->setContentsMargins(24,22,24,24); scl->setSpacing(16);
     scl->addWidget(label(QStringLiteral("全局快捷键"),"sectionTitle")); auto *sf=new QFormLayout;
-    toggleShortcut=new QKeySequenceEdit(QKeySequence(Qt::Key_F6)); stopShortcut=new QKeySequenceEdit(QKeySequence(Qt::Key_F8)); recordShortcut=new QKeySequenceEdit(QKeySequence(Qt::Key_F7));
-    sf->addRow(QStringLiteral("启动 / 停止任务"),toggleShortcut); sf->addRow(QStringLiteral("立即停止"),stopShortcut); sf->addRow(QStringLiteral("开始 / 结束录制"),recordShortcut); scl->addLayout(sf);
-    minimizeOnStart=new QCheckBox(QStringLiteral("启动任务时自动最小化")); scl->addWidget(minimizeOnStart); auto *apply=new QPushButton(QStringLiteral("应用快捷键")); scl->addWidget(apply,0,Qt::AlignLeft); sl->addWidget(scard);
-    sl->addStretch(); tabs->addTab(settings,QStringLiteral("设置"));
+    sf->setVerticalSpacing(16); sf->setLabelAlignment(Qt::AlignLeft|Qt::AlignVCenter);
+    toggleShortcut=new ShortcutField(QKeySequence(Qt::Key_F6)); stopShortcut=new ShortcutField(QKeySequence(Qt::Key_F8)); recordShortcut=new ShortcutField(QKeySequence(Qt::Key_F7));
+    toggleShortcut->setObjectName("toggleShortcut"); stopShortcut->setObjectName("stopShortcut"); recordShortcut->setObjectName("recordShortcut");
+    auto shortcutRow=[this](ShortcutField *field,int defaultKey) {
+        auto *reset=new QPushButton(QStringLiteral("重置")); reset->setObjectName(field->objectName()+"Reset"); reset->setFocusPolicy(Qt::NoFocus);
+        connect(reset,&QPushButton::clicked,this,[field,defaultKey] { field->clearFocus(); field->setKeySequence(QKeySequence(defaultKey)); });
+        connect(field,&ShortcutField::editingChanged,this,[this](bool editing) { QString error; if(!hotkeys.setPaused(editing,error)) notice(error,true); });
+        connect(field,&ShortcutField::keySequenceChanged,this,[this] {
+            QString error;
+            if(hotkeys.set(toggleShortcut->keySequence(),stopShortcut->keySequence(),recordShortcut->keySequence(),error)) { settingsSave(); shortcutHint(); }
+            else {
+                QSignalBlocker a(toggleShortcut),b(stopShortcut),c(recordShortcut);
+                toggleShortcut->setKeySequence(hotkeys.sequence(1)); stopShortcut->setKeySequence(hotkeys.sequence(2)); recordShortcut->setKeySequence(hotkeys.sequence(3)); notice(error,true);
+            }
+        });
+        return row({field,reset});
+    };
+    sf->addRow(QStringLiteral("启动 / 停止任务"),shortcutRow(toggleShortcut,Qt::Key_F6)); sf->addRow(QStringLiteral("立即停止"),shortcutRow(stopShortcut,Qt::Key_F8)); sf->addRow(QStringLiteral("开始 / 结束录制"),shortcutRow(recordShortcut,Qt::Key_F7)); scl->addLayout(sf);
+    minimizeOnStart=new QCheckBox(QStringLiteral("启动任务时自动最小化")); scl->addWidget(minimizeOnStart);
+    auto *settingsContent=new QWidget; auto *settingsBody=new QVBoxLayout(settingsContent); settingsBody->setContentsMargins(0,0,10,0);
+    auto *settingsCenter=new QHBoxLayout; settingsCenter->addStretch(); settingsCenter->addWidget(scard,1); settingsCenter->addStretch(); settingsBody->addLayout(settingsCenter); settingsBody->addStretch();
+    sl->addWidget(makeScroll(settingsContent,"settingsScroll")); tabs->addTab(settings,QStringLiteral("设置"));
     auto *options=new QHBoxLayout; delay=new TimeField(0,60000,2000); delay->setObjectName("startDelay"); delay->setFixedWidth(235);
-    rounds=spin(0,1000000,1); rounds->setSpecialValueText(QStringLiteral("无限")); options->addWidget(label(QStringLiteral("启动延迟"))); options->addWidget(delay);
-    options->addSpacing(15); options->addWidget(label(QStringLiteral("脚本循环"))); options->addWidget(rounds); options->addStretch(); stats=label(QStringLiteral("等待开始"),"muted"); options->addWidget(stats); root->addLayout(options);
+    rounds=spin(0,1000000,1); rounds->setObjectName("scriptRounds"); rounds->setSpecialValueText(QStringLiteral("无限")); options->addWidget(label(QStringLiteral("启动延迟"))); options->addWidget(delay);
+    roundsRow=row({label(QStringLiteral("脚本循环")),rounds}); options->addSpacing(15); options->addWidget(roundsRow); options->addStretch(); stats=label(QStringLiteral("等待开始"),"muted"); options->addWidget(stats); root->addLayout(options);
     auto *footer=new QHBoxLayout; message=label(QStringLiteral("F6 启停 · F8 停止 · F7 录制"),"muted"); footer->addWidget(message,1);
     startButton=new QPushButton(QStringLiteral("▶  开始任务")); startButton->setObjectName("primary"); stopButton=new QPushButton(QStringLiteral("■  停止")); stopButton->setObjectName("stop"); stopButton->setEnabled(false);
     footer->addWidget(startButton); footer->addWidget(stopButton); root->addLayout(footer);
@@ -262,7 +287,6 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     connect(load,&QPushButton::clicked,this,[this] { auto file=QFileDialog::getOpenFileName(this,QStringLiteral("导入脚本"),scriptPath,QStringLiteral("点序脚本 (*.json)")); if(!file.isEmpty()) loadScript(file); });
     connect(save,&QPushButton::clicked,this,&Window::saveScript); connect(recordButton,&QPushButton::clicked,this,&Window::record);
     connect(&monitor,&InputMonitor::observed,this,&Window::appendRecorded,Qt::QueuedConnection);
-    connect(apply,&QPushButton::clicked,this,[this] { QString error; if(hotkeys.set(toggleShortcut->keySequence(),stopShortcut->keySequence(),recordShortcut->keySequence(),error)) { settingsSave(); notice(QStringLiteral("快捷键已应用")); } else notice(error,true); });
     connect(&hotkeys,&Hotkeys::triggered,this,[this](int id) {
         if(QApplication::activeModalWidget()) return;
         if(id==2) { endRecording(); engine.stop(); notice(QStringLiteral("已立即停止")); }
@@ -270,14 +294,20 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
         else if(recording) endRecording();
         else if(engine.running()) engine.stop(); else start();
     });
-    connect(tabs,&QTabWidget::currentChanged,this,[this](int index) { rounds->setEnabled(index==1 && !engine.running() && !recording); });
+    connect(tabs,&QTabWidget::currentChanged,this,[this,workspace](int index) { workspace->setMaximumWidth(index==1?1120:840); workspace->setMaximumHeight(index==1?1000:660); roundsRow->setVisible(index==1); rounds->setEnabled(index==1 && !engine.running() && !recording); });
     Step initial; initial.action=Action::Repeat; initial.count=0; quick->setValue(initial);
     Step first; first.action=Action::Click; refreshItem(new QListWidgetItem(flow),first);
     Step wait; wait.action=Action::Wait; wait.duration=500; refreshItem(new QListWidgetItem(flow),wait); flow->setCurrentRow(0);
-    rounds->setEnabled(false); if(!testMode) settingsLoad();
+    roundsRow->hide(); rounds->setEnabled(false); if(!testMode) settingsLoad();
 }
 Window::~Window() { shutdown(); }
 void Window::notice(const QString &s,bool error) { message->setText(s); message->setStyleSheet(error?"color:#bd4c5b;":"color:#798397;"); message->setToolTip(s); }
+void Window::shortcutHint() {
+    QStringList parts;
+    for(const auto &pair:QList<QPair<int,QString>>{{1,QStringLiteral("启停")},{2,QStringLiteral("停止")},{3,QStringLiteral("录制")}})
+        if(!hotkeys.sequence(pair.first).isEmpty()) parts.append(hotkeys.sequence(pair.first).toString(QKeySequence::NativeText)+" "+pair.second);
+    notice(parts.join(QStringLiteral(" · ")));
+}
 void Window::refreshItem(QListWidgetItem *item,const Step &s) { item->setText(s.title()); item->setToolTip(s.detail()); item->setData(Qt::UserRole,s.json()); }
 void Window::addStep(Action a) {
     if(flow->count()>=10000) { notice(QStringLiteral("步骤最多 10000 个"),true); return; }
@@ -370,8 +400,14 @@ void Window::settingsLoad() {
     if(Script::parse(st.value("flow").toByteArray(),saved,error,true)) setScript(saved);
     Step q; if(Step::parse(QJsonDocument::fromJson(st.value("quick").toByteArray()).object(),q,error) && int(q.action)<5) quick->setValue(q);
     delay->setValue(st.value("delay",2000).toInt()); minimizeOnStart->setChecked(st.value("minimize",false).toBool());
-    toggleShortcut->setKeySequence(QKeySequence(st.value("toggle","F6").toString())); stopShortcut->setKeySequence(QKeySequence(st.value("stop","F8").toString())); recordShortcut->setKeySequence(QKeySequence(st.value("record","F7").toString()));
-    if(!hotkeys.set(toggleShortcut->keySequence(),stopShortcut->keySequence(),recordShortcut->keySequence(),error)) notice(error,true);
+    QSignalBlocker a(toggleShortcut),b(stopShortcut),c(recordShortcut);
+    auto savedShortcut=[&st](const char *name,const char *fallback) {
+        QKeySequence sequence(st.value(name,fallback).toString()); UINT m,v;
+        if(!sequence.isEmpty() && !Hotkeys::decode(sequence,m,v)) return QKeySequence();
+        return sequence;
+    };
+    toggleShortcut->setKeySequence(savedShortcut("toggle","F6")); stopShortcut->setKeySequence(savedShortcut("stop","F8")); recordShortcut->setKeySequence(savedShortcut("record","F7"));
+    if(!hotkeys.set(toggleShortcut->keySequence(),stopShortcut->keySequence(),recordShortcut->keySequence(),error)) notice(error,true); else shortcutHint();
     tabs->setCurrentIndex(qBound(0,st.value("tab",0).toInt(),2));
 }
 void Window::settingsSave() {
@@ -379,7 +415,7 @@ void Window::settingsSave() {
     QSettings st; st.setValue("geometry",saveGeometry()); st.setValue("flow",QJsonDocument(currentScript().json()).toJson(QJsonDocument::Compact));
     st.setValue("quick",QJsonDocument(quick->value().json()).toJson(QJsonDocument::Compact)); st.setValue("delay",delay->value()); st.setValue("minimize",minimizeOnStart->isChecked()); st.setValue("tab",tabs->currentIndex());
     for(const auto &pair:QList<QPair<int,QString>>{{1,"toggle"},{2,"stop"},{3,"record"}}) {
-        if(!hotkeys.sequence(pair.first).isEmpty()) st.setValue(pair.second,hotkeys.sequence(pair.first).toString(QKeySequence::PortableText));
+        st.setValue(pair.second,hotkeys.sequence(pair.first).toString(QKeySequence::PortableText));
     }
     st.sync();
 }

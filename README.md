@@ -21,7 +21,7 @@
 从 [Releases](https://github.com/wjy1603283179/LianDianQi/releases) 下载 Windows x64 ZIP，完整解压后双击 `LianDianQi.exe`。
 无需安装 Qt 或 Python。程序首次打开不会自动发送输入。
 
-选择按键和动作，设置参数，F6 开始；默认 2 秒后执行，留出切换窗口的时间。F8 随时停止。
+采集按键、选择动作并设置参数，F6 开始；默认 2 秒后执行，留出切换窗口的时间。F8 随时停止。
 点 × 会停止任务、释放程序按住的键、注销快捷键和采集钩子并退出进程。
 
 完整说明：[USAGE.md](docs/USAGE.md)。管理员窗口需要同级权限；部分游戏和系统安全界面可能拒绝模拟输入。
@@ -56,7 +56,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```powershell
 python scripts\prepare-licenses.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\package.ps1
-python tests\native_smoke.py --exe dist\DianXu-1.0.1-windows-x64\LianDianQi.exe
+python tests\native_smoke.py --exe dist\DianXu-1.0.2-windows-x64\LianDianQi.exe
 ```
 
 便携包包含运行依赖、示例、接入脚本、使用说明和第三方许可。ZIP 附有 SHA-256 校验文件。

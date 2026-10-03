@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LianDianQi VERSION 1.0.1 LANGUAGES CXX)
+project(LianDianQi VERSION 1.0.2 LANGUAGES CXX)
 if(NOT WIN32)
     message(FATAL_ERROR "LianDianQi currently supports Windows only")
 endif()
