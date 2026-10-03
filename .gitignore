@@ -1,0 +1,8 @@
+/build*/
+/dist/
+/.tools/
+/artifacts/
+*.user
+*.log
+__pycache__/
+.DS_Store

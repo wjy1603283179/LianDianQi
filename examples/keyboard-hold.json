@@ -1,0 +1,11 @@
+{
+  "format": "liandianqi-script",
+  "version": 1,
+  "rounds": 1,
+  "startDelayMs": 2000,
+  "steps": [
+    {"action": "down", "input": {"device": "keyboard", "code": 65}},
+    {"action": "wait", "durationMs": 1000},
+    {"action": "up", "input": {"device": "keyboard", "code": 65}}
+  ]
+}

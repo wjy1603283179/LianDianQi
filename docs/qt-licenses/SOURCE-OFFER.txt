@@ -1,0 +1,9 @@
+This release dynamically links to unmodified Qt 6.5.3 (Core, GUI, Widgets, Network and Windows platform plugin).
+Qt is provided under LGPL-3.0; its complete corresponding source code, including third-party code, is available without charge at:
+https://download.qt.io/archive/qt/6.5/6.5.3/submodules/qtbase-everywhere-src-6.5.3.tar.xz
+https://code.qt.io/cgit/qt/qtbase.git/
+
+You may replace these shared libraries with compatible modified builds. Reverse engineering for debugging changes to Qt is permitted.
+Application source and CMake build instructions are included in the public repository. The application's MIT license does not change Qt's license.
+The package also includes Microsoft Visual C++ Redistributable runtime DLLs.
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files

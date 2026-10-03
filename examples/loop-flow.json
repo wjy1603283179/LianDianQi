@@ -1,0 +1,12 @@
+{
+  "format": "liandianqi-script",
+  "version": 1,
+  "rounds": 1,
+  "startDelayMs": 2000,
+  "steps": [
+    {"action": "loop", "count": 3},
+    {"action": "click", "input": {"device": "mouse", "code": 1}},
+    {"action": "wait", "durationMs": 500},
+    {"action": "endLoop"}
+  ]
+}
