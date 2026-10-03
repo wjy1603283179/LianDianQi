@@ -28,13 +28,18 @@ jobs:
         shell: powershell
         run: .\scripts\package.ps1
       - name: Verify portable startup without development PATH
+        timeout-minutes: 1
         shell: powershell
         run: |
           $env:PATH = "$env:SystemRoot\System32"
-          $env:QT_QPA_PLATFORM = 'offscreen'
+          $env:QT_QPA_PLATFORM = 'windows'
           $exe = (Resolve-Path '.\dist\DianXu-1.0.0-windows-x64\LianDianQi.exe').Path
           $preview = Join-Path $env:RUNNER_TEMP 'preview.png'
-          $proc = Start-Process -FilePath $exe -ArgumentList "--screenshot `"$preview`"" -WindowStyle Hidden -PassThru -Wait
+          $proc = Start-Process -FilePath $exe -ArgumentList "--screenshot `"$preview`"" -WindowStyle Hidden -PassThru
+          if (!$proc.WaitForExit(15000)) {
+            $proc.Kill()
+            throw 'Portable preview did not exit within 15 seconds'
+          }
           if ($proc.ExitCode -ne 0 -or !(Test-Path -LiteralPath $preview)) { throw 'Portable startup failed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
