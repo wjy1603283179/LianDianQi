@@ -52,11 +52,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 
 也可给 build.ps1 传入 `-QtRoot`，使用已有 Qt 开发套件。构建会执行 QtTest。
 测试报告写入 `build/test-results.txt`；集成测试见 `tests/native_smoke.py`。
+双屏检查见 `tests/display_smoke.py`，覆盖屏幕四角、边缘、负坐标及不同缩放。
 
 ```powershell
 python scripts\prepare-licenses.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\package.ps1
-python tests\native_smoke.py --exe dist\DianXu-1.0.3-windows-x64\LianDianQi.exe
+python tests\native_smoke.py --exe dist\DianXu-1.0.4-windows-x64\LianDianQi.exe
+```
+
+关闭已运行的点序实例后，可运行以下真实双屏检查。`--change-layout` 会临时把副屏设为
+1920×1080，并依次放到主屏四侧；检查结束或失败后自动恢复原显示配置，不写入系统永久设置。
+省略该参数则只测试当前分辨率和测试进程的缩放配置。
+
+```powershell
+python tests\display_smoke.py --change-layout
 ```
 
 便携包包含运行依赖、示例、接入脚本、使用说明和第三方许可。ZIP 附有 SHA-256 校验文件。

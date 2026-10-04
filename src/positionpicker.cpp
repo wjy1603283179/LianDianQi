@@ -44,11 +44,16 @@ PositionPicker::PositionPicker(QWidget *parent)
         if(panel!=this) panel->setObjectName("positionPickerSurface"); panel->setAttribute(Qt::WA_TranslucentBackground);
         panel->setCursor(Qt::CrossCursor); panel->setFocusPolicy(Qt::StrongFocus); panel->installEventFilter(this);
         panel->winId(); panel->windowHandle()->setScreen(screen); panel->setGeometry(screen->geometry());
+        // A normal QDialog may be centered on its owner when exec() shows it,
+        // moving the overlays away from their screens. Fullscreen placement
+        // also lets the platform use each monitor's complete native bounds.
+        panel->setWindowState(Qt::WindowFullScreen);
         panels.append(panel);
         connect(screen,&QScreen::geometryChanged,this,[this] { reject(); });
     }
     connect(qApp,&QGuiApplication::screenAdded,this,[this] { reject(); });
     connect(qApp,&QGuiApplication::screenRemoved,this,[this] { reject(); });
+    connect(qApp,&QGuiApplication::primaryScreenChanged,this,[this] { reject(); });
 }
 void PositionPicker::showEvent(QShowEvent *event) {
     QDialog::showEvent(event);
@@ -61,11 +66,17 @@ bool PositionPicker::nativeEvent(const QByteArray &type,void *message,qintptr *r
 }
 bool PositionPicker::eventFilter(QObject *watched,QEvent *event) {
     if(event->type()==QEvent::KeyPress) {
-        if(static_cast<QKeyEvent *>(event)->key()==Qt::Key_Escape) reject();
+        if(static_cast<QKeyEvent *>(event)->key()==Qt::Key_Escape) {
+            // Absorb outstanding button releases even when cancelling midway
+            // through a click; a release alone can activate some target UIs.
+            if(heldButtons) cancelRequested=true; else reject();
+        }
         return true;
     }
+    if(event->type()==QEvent::KeyRelease || event->type()==QEvent::Wheel) return true;
     if(event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseButtonDblClick) {
         auto *mouse=static_cast<QMouseEvent *>(event);
+        heldButtons|=mouse->button();
         if(mouse->button()==Qt::LeftButton) {
             auto *panel=qobject_cast<QWidget *>(watched);
             const QVariant nativePoint=panel->property("nativePressPosition");
@@ -87,9 +98,13 @@ bool PositionPicker::eventFilter(QObject *watched,QEvent *event) {
     }
     if(event->type()==QEvent::MouseButtonRelease) {
         auto *mouse=static_cast<QMouseEvent *>(event);
+        heldButtons&=~Qt::MouseButtons(mouse->button());
         // Keep the overlay alive until release so neither half of the click
         // reaches a target window or changes foreground applications.
-        if(mouse->button()==Qt::LeftButton && pressed) { pressed=false; accept(); }
+        if(mouse->button()==Qt::LeftButton && pressed) { pressed=false; selectionReleased=true; }
+        if(!heldButtons) {
+            if(cancelRequested) reject(); else if(selectionReleased) accept();
+        }
         return true;
     }
     return QDialog::eventFilter(watched,event);

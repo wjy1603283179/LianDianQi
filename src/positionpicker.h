@@ -17,4 +17,6 @@ private:
     QList<QWidget *> panels;
     QPoint selected;
     bool pressed=false;
+    Qt::MouseButtons heldButtons;
+    bool cancelRequested=false,selectionReleased=false;
 };

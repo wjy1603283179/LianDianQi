@@ -33,7 +33,8 @@ bool WindowsInput::keyEvent(const InputKey &k, bool down, QString &error) { INPU
 bool WindowsInput::move(const QPoint &p, QString &error) {
     int left = GetSystemMetrics(SM_XVIRTUALSCREEN), top = GetSystemMetrics(SM_YVIRTUALSCREEN);
     int width = GetSystemMetrics(SM_CXVIRTUALSCREEN), height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if (p.x() < left || p.x() >= left+width || p.y() < top || p.y() >= top+height || width < 2 || height < 2) {
+    if (p.x() < left || p.x() >= left+width || p.y() < top || p.y() >= top+height || width < 2 || height < 2
+        || !MonitorFromPoint(POINT{p.x(),p.y()},MONITOR_DEFAULTTONULL)) {
         error = QStringLiteral("鼠标坐标不在当前屏幕范围内"); return false;
     }
     INPUT in = {}; in.type = INPUT_MOUSE;

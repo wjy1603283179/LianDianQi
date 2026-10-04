@@ -33,7 +33,7 @@ jobs:
         run: |
           $env:PATH = "$env:SystemRoot\System32"
           $env:QT_QPA_PLATFORM = 'windows'
-          $exe = (Resolve-Path '.\dist\DianXu-1.0.3-windows-x64\LianDianQi.exe').Path
+          $exe = (Resolve-Path '.\dist\DianXu-1.0.4-windows-x64\LianDianQi.exe').Path
           $preview = Join-Path $env:RUNNER_TEMP 'preview.png'
           $proc = Start-Process -FilePath $exe -ArgumentList "--screenshot `"$preview`"" -WindowStyle Hidden -PassThru
           if (!$proc.WaitForExit(15000)) {

@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(LianDianQi VERSION 1.0.3 LANGUAGES CXX)
+project(LianDianQi VERSION 1.0.4 LANGUAGES CXX)
+# The Windows build script probes the actual compiler output encoding. Older
+# CMake versions can misdecode localized /showIncludes output, losing header
+# dependencies and producing incompatible objects after a header change.
+if(MSVC AND DEFINED DIANXU_SHOWINCLUDES_PREFIX)
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "${DIANXU_SHOWINCLUDES_PREFIX}")
+endif()
 if(NOT WIN32)
     message(FATAL_ERROR "LianDianQi currently supports Windows only")
 endif()

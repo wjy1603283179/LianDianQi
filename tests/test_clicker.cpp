@@ -30,10 +30,32 @@ public:
 };
 class ClickTarget : public QWidget {
 public:
-    int clicks=0;
+    int clicks=0,releases=0;
 protected:
     void mousePressEvent(QMouseEvent *event) override { ++clicks; event->accept(); }
+    void mouseReleaseEvent(QMouseEvent *event) override { ++releases; event->accept(); }
 };
+static QList<QRect> nativeMonitorRects() {
+    QList<QRect> rects;
+    EnumDisplayMonitors(nullptr,nullptr,[](HMONITOR,HDC,LPRECT rect,LPARAM data)->BOOL {
+        reinterpret_cast<QList<QRect> *>(data)->append(QRect(rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top));
+        return TRUE;
+    },reinterpret_cast<LPARAM>(&rects));
+    return rects;
+}
+static QList<QPoint> monitorTestPoints(const QRect &rect) {
+    return {rect.topLeft(),rect.topRight(),rect.bottomLeft(),rect.bottomRight(),rect.center(),
+        QPoint(rect.center().x(),rect.top()),QPoint(rect.center().x(),rect.bottom()),
+        QPoint(rect.left(),rect.center().y()),QPoint(rect.right(),rect.center().y())};
+}
+static UINT nativeClickAt(const QPoint &point) {
+    INPUT click[3]={}; for(auto &event:click) event.type=INPUT_MOUSE;
+    click[0].mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;
+    click[0].mi.dx=LONG((qint64(point.x()-GetSystemMetrics(SM_XVIRTUALSCREEN))*65536+32768)/GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    click[0].mi.dy=LONG((qint64(point.y()-GetSystemMetrics(SM_YVIRTUALSCREEN))*65536+32768)/GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    click[1].mi.dwFlags=MOUSEEVENTF_LEFTDOWN; click[2].mi.dwFlags=MOUSEEVENTF_LEFTUP;
+    return SendInput(3,click,sizeof(INPUT));
+}
 class Tests : public QObject {
     Q_OBJECT
 private slots:
@@ -164,6 +186,25 @@ private slots:
         w.findChild<QPushButton *>("toggleShortcutReset")->click(); QCOMPARE(toggle->keySequence(),QKeySequence("F6"));
         QCOMPARE(stop->keySequence(),QKeySequence("Ctrl+Alt+F20")); QCOMPARE(record->keySequence(),QKeySequence("Ctrl+Alt+F21")); w.close();
     }
+    void shortcutUnavailableAtLaunchDoesNotEraseSavedBindings() {
+        QTemporaryDir dir; const auto previousFormat=QSettings::defaultFormat();
+        const QString previousOrg=QCoreApplication::organizationName(),previousApp=QCoreApplication::applicationName();
+        auto restore=qScopeGuard([&] {
+            UnregisterHotKey(nullptr,50); UnregisterHotKey(nullptr,51); QSettings::setDefaultFormat(previousFormat);
+            QCoreApplication::setOrganizationName(previousOrg); QCoreApplication::setApplicationName(previousApp);
+        });
+        QSettings::setDefaultFormat(QSettings::IniFormat); QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,dir.path());
+        QCoreApplication::setOrganizationName("DianXuTests"); QCoreApplication::setApplicationName("ShortcutConflictPersistence");
+        const QString toggle="Ctrl+Alt+Shift+F19",stop="Ctrl+Alt+Shift+F20",record="Ctrl+Alt+Shift+F21";
+        { QSettings settings; settings.setValue("toggle",toggle); settings.setValue("stop",stop); settings.setValue("record",record); }
+        QVERIFY(RegisterHotKey(nullptr,50,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT|MOD_SHIFT,VK_F19));
+        { Window window; window.close(); }
+        { QSettings settings; QCOMPARE(settings.value("toggle").toString(),toggle); QCOMPARE(settings.value("stop").toString(),stop); QCOMPARE(settings.value("record").toString(),record); }
+        UnregisterHotKey(nullptr,50);
+        { Window window; QCOMPARE(window.findChild<ShortcutField *>("toggleShortcut")->keySequence(),QKeySequence(toggle));
+          QVERIFY(!RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT|MOD_SHIFT,VK_F19)); window.close(); }
+        QVERIFY(RegisterHotKey(nullptr,51,MOD_NOREPEAT|MOD_CONTROL|MOD_ALT|MOD_SHIFT,VK_F19)); UnregisterHotKey(nullptr,51);
+    }
     void responsiveCoordinatesAndPageOptions() {
         Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
         auto *quick=w.findChild<StepEditor *>(); auto *fixed=w.findChild<QCheckBox *>("quickFixed"); auto *rounds=w.findChild<QSpinBox *>("scriptRounds");
@@ -231,6 +272,20 @@ private slots:
         QTimer::singleShot(0,&w,[&] { auto *dialog=qobject_cast<PositionPicker *>(QApplication::activeModalWidget()); QVERIFY(dialog); QTest::keyClick(dialog,Qt::Key_Escape); });
         w.findChild<QPushButton *>("quickPositionCapture")->click(); QCOMPARE(editor->value().position,step.position); QCOMPARE(changed.count(),0); QVERIFY(w.isVisible()); w.close();
     }
+    void pickerEscDuringMousePressAbsorbsRelease() {
+        QWidget owner; owner.show();
+        for(Qt::MouseButton button:{Qt::LeftButton,Qt::RightButton}) {
+            PositionPicker picker(&owner);
+            QTimer::singleShot(0,&picker,[&] {
+                QTest::mousePress(&picker,button,Qt::NoModifier,QPoint(50,50));
+                QTest::keyClick(&picker,Qt::Key_Escape);
+                QVERIFY(picker.isVisible());
+                QTest::mouseRelease(&picker,button,Qt::NoModifier,QPoint(70,70));
+            });
+            QTimer::singleShot(5000,&picker,&QDialog::reject);
+            QCOMPARE(picker.exec(),int(QDialog::Rejected)); QVERIFY(!picker.isVisible());
+        }
+    }
     void nativePickerBlocksUnderlyingClickAndRestoresWindow() {
         if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend; run separately with QT_QPA_PLATFORM=windows.");
         POINT saved; QVERIFY(GetPhysicalCursorPos(&saved)); HWND foreground=GetForegroundWindow();
@@ -262,6 +317,123 @@ private slots:
             for(auto *widget:QApplication::topLevelWidgets()) QVERIFY(!widget->objectName().startsWith("positionPicker"));
         }
         w.close();
+    }
+    void nativePickerCoversEveryMonitor() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend.");
+        QWidget owner; owner.resize(800,480); owner.show();
+        for(auto *ownerScreen:QApplication::screens()) {
+            owner.windowHandle()->setScreen(ownerScreen); owner.move(ownerScreen->geometry().topLeft()+QPoint(50,50));
+            PositionPicker picker(&owner); bool checked=false;
+            QTimer::singleShot(250,&picker,[&] {
+                auto cancel=qScopeGuard([&] { picker.reject(); });
+                checked=true;
+                QList<QRect> covered;
+                for(auto *panel:QApplication::topLevelWidgets()) {
+                    if(!panel->objectName().startsWith("positionPicker")) continue;
+                    const HWND handle=reinterpret_cast<HWND>(panel->winId());
+                    MONITORINFO info{sizeof(MONITORINFO)};
+                    QVERIFY(GetMonitorInfoW(MonitorFromWindow(handle,MONITOR_DEFAULTTONEAREST),&info));
+                    RECT bounds; QVERIFY(GetWindowRect(handle,&bounds));
+                    const QRect actual(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);
+                    const QRect expected(info.rcMonitor.left,info.rcMonitor.top,info.rcMonitor.right-info.rcMonitor.left,info.rcMonitor.bottom-info.rcMonitor.top);
+                    // Fractional Qt scaling can round the backing store out by
+                    // one device pixel. Require complete coverage without gaps
+                    // and reject displacement larger than that rounding margin.
+                    QVERIFY2(actual.contains(expected),qPrintable(QString("Overlay %1,%2 %3x%4 does not cover monitor %5,%6 %7x%8")
+                        .arg(actual.x()).arg(actual.y()).arg(actual.width()).arg(actual.height())
+                        .arg(expected.x()).arg(expected.y()).arg(expected.width()).arg(expected.height())));
+                    const int roundingMargin=qRound(panel->devicePixelRatioF())+1;
+                    QVERIFY(expected.left()-actual.left()<=roundingMargin && actual.right()-expected.right()<=roundingMargin);
+                    QVERIFY(expected.top()-actual.top()<=roundingMargin && actual.bottom()-expected.bottom()<=roundingMargin);
+                    QVERIFY(!covered.contains(expected)); covered.append(expected);
+                    for(const QPoint point:monitorTestPoints(expected))
+                        QCOMPARE(GetAncestor(WindowFromPoint(POINT{point.x(),point.y()}),GA_ROOT),handle);
+                }
+                const auto monitors=nativeMonitorRects(); QCOMPARE(covered.size(),monitors.size());
+                for(const QRect &rect:monitors) QVERIFY(covered.contains(rect));
+            });
+            QTimer::singleShot(5000,&picker,&QDialog::reject);
+            QCOMPARE(picker.exec(),int(QDialog::Rejected)); QVERIFY(checked);
+        }
+        owner.close();
+    }
+    void nativePickerSelectsCornersAndEdges() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend.");
+        POINT saved; QVERIFY(GetPhysicalCursorPos(&saved)); HWND foreground=GetForegroundWindow();
+        auto restore=qScopeGuard([&] { SetPhysicalCursorPos(saved.x,saved.y); if(foreground) SetForegroundWindow(foreground); });
+        QWidget owner; owner.resize(800,480); owner.show();
+        const auto monitors=nativeMonitorRects();
+        for(const QRect &monitor:monitors) for(const QPoint &point:monitorTestPoints(monitor)) {
+            PositionPicker picker(&owner);
+            QTimer::singleShot(100,&picker,[&] {
+                HWND under=GetAncestor(WindowFromPoint(POINT{point.x(),point.y()}),GA_ROOT);
+                QWidget *surface=QWidget::find(reinterpret_cast<WId>(under));
+                if(!surface || !surface->objectName().startsWith("positionPicker")) { picker.reject(); QFAIL("Picker does not intercept this screen edge"); }
+                QCOMPARE(nativeClickAt(point),UINT(3));
+            });
+            QTimer::singleShot(5000,&picker,&QDialog::reject);
+            QCOMPARE(picker.exec(),int(QDialog::Accepted)); QCOMPARE(picker.position(),point);
+        }
+        owner.close();
+    }
+    void nativePickerEscDoesNotLeakMouseRelease() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend.");
+        POINT saved; QVERIFY(GetPhysicalCursorPos(&saved)); HWND foreground=GetForegroundWindow();
+        auto restore=qScopeGuard([&] {
+            if(GetAsyncKeyState(VK_LBUTTON)&0x8000) { INPUT release={}; release.type=INPUT_MOUSE; release.mi.dwFlags=MOUSEEVENTF_LEFTUP; SendInput(1,&release,sizeof(INPUT)); }
+            SetPhysicalCursorPos(saved.x,saved.y); if(foreground) SetForegroundWindow(foreground);
+        });
+        ClickTarget target; target.resize(240,140); target.move(40,40); target.show(); QWidget owner; owner.show();
+        {
+            PositionPicker picker(&owner); bool cancelledWhileVisible=false;
+            QTimer::singleShot(100,&picker,[&] {
+                RECT bounds; QVERIFY(GetWindowRect(reinterpret_cast<HWND>(target.winId()),&bounds));
+                SetPhysicalCursorPos((bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2);
+                INPUT press={}; press.type=INPUT_MOUSE; press.mi.dwFlags=MOUSEEVENTF_LEFTDOWN; QCOMPARE(SendInput(1,&press,sizeof(INPUT)),UINT(1));
+            });
+            QTimer::singleShot(200,&picker,[&] {
+                INPUT escape[2]={}; for(auto &event:escape) { event.type=INPUT_KEYBOARD; event.ki.wVk=VK_ESCAPE; }
+                escape[1].ki.dwFlags=KEYEVENTF_KEYUP; QCOMPARE(SendInput(2,escape,sizeof(INPUT)),UINT(2));
+            });
+            QTimer::singleShot(300,&picker,[&] {
+                cancelledWhileVisible=picker.isVisible();
+                INPUT release={}; release.type=INPUT_MOUSE; release.mi.dwFlags=MOUSEEVENTF_LEFTUP;
+                QCOMPARE(SendInput(1,&release,sizeof(INPUT)),UINT(1));
+            });
+            QTimer::singleShot(5000,&picker,&QDialog::reject);
+            QCOMPARE(picker.exec(),int(QDialog::Rejected)); QVERIFY(cancelledWhileVisible);
+            QCoreApplication::processEvents(); QCOMPARE(target.clicks,0); QCOMPARE(target.releases,0);
+        }
+        owner.close(); target.close();
+    }
+    void controlToggleCannotStartWhilePicking() {
+        Window w(nullptr,true); w.show(); auto *editor=w.findChild<StepEditor *>(); Step step; step.fixedPosition=true; editor->setValue(step);
+        QTimer::singleShot(0,&w,[&] {
+            auto *picker=qobject_cast<PositionPicker *>(QApplication::activeModalWidget()); QVERIFY(picker);
+            auto cancel=qScopeGuard([&] { picker->reject(); w.execution().stop(); });
+            w.toggleTask(); QVERIFY(!w.execution().running());
+        });
+        QTimer::singleShot(5000,&w,[&] { if(auto *dialog=QApplication::activeModalWidget()) dialog->close(); });
+        w.findChild<QPushButton *>("quickPositionCapture")->click(); w.close();
+    }
+    void nativeMoveUsesPhysicalPixelsAndRejectsDesktopGaps() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend.");
+        POINT saved; QVERIFY(GetPhysicalCursorPos(&saved)); auto restore=qScopeGuard([&] { SetPhysicalCursorPos(saved.x,saved.y); });
+        WindowsInput input; QString error; const auto monitors=nativeMonitorRects(); QRect desktop;
+        for(const QRect &rect:monitors) { desktop=desktop.united(rect); for(const QPoint &point:monitorTestPoints(rect)) {
+            QVERIFY2(input.move(point,error),qPrintable(error));
+            QTRY_VERIFY(([&] { POINT cursor; return GetPhysicalCursorPos(&cursor) && QPoint(cursor.x,cursor.y)==point; })());
+        } }
+        // Unequal or staggered monitors leave holes inside the virtual desktop's bounding rectangle.
+        QList<QPoint> points=monitorTestPoints(desktop);
+        for(const QRect &rect:monitors) points.append(monitorTestPoints(rect.adjusted(-1,-1,1,1)));
+        for(const QPoint &point:points) {
+            bool onScreen=false; for(const QRect &rect:monitors) onScreen|=rect.contains(point);
+            if(onScreen) continue;
+            POINT before; QVERIFY(GetPhysicalCursorPos(&before));
+            QVERIFY(!input.move(point,error)); POINT after; QVERIFY(GetPhysicalCursorPos(&after));
+            QCOMPARE(QPoint(after.x,after.y),QPoint(before.x,before.y));
+        }
     }
     void capturedKeyDisplayPreservesPhysicalMetadata() {
         StepEditor editor(true); InputKey captured{false,VK_RCONTROL,0x1d,true}; Step step; step.key=captured; editor.setValue(step);
@@ -307,6 +479,30 @@ private slots:
         QCOMPARE(s.steps[1].duration,200); QCOMPARE(s.steps[3].duration,300);
         QCOMPARE(s.steps.last().action,Action::Up); QCOMPARE(s.steps.last().key.code,int('W'));
         QVERIFY(!w.execution().running()); w.close();
+    }
+    void nativeRecordingKeepsMouseReleaseOverItsOwnWindow() {
+        if(QGuiApplication::platformName()!=QStringLiteral("windows")) QSKIP("Requires the native Windows UI backend.");
+        ClickTarget target; target.resize(180,120); target.move(40,40); target.show();
+        Window w(nullptr,true); w.move(400,300); w.show(); w.raise(); w.activateWindow();
+        auto *list=w.findChild<QListWidget *>("flow"); list->clear(); w.findChild<QTabWidget *>("tabs")->setCurrentIndex(1);
+        QPushButton *record=nullptr;
+        for(auto *button:w.findChildren<QPushButton *>()) if(button->text()==QStringLiteral("● 录制输入")) record=button;
+        QVERIFY(record); record->click(); auto *monitor=w.findChild<InputMonitor *>("recordingMonitor"); QVERIFY(monitor);
+        QTest::qWait(100);
+        RECT outsideBounds,ownBounds;
+        QVERIFY(GetWindowRect(reinterpret_cast<HWND>(target.winId()),&outsideBounds));
+        QVERIFY(GetWindowRect(reinterpret_cast<HWND>(w.winId()),&ownBounds));
+        const QPoint outside((outsideBounds.left+outsideBounds.right)/2,(outsideBounds.top+outsideBounds.bottom)/2);
+        const QPoint inside((ownBounds.left+ownBounds.right)/2,(ownBounds.top+ownBounds.bottom)/2);
+        QCOMPARE(GetAncestor(WindowFromPoint(POINT{inside.x(),inside.y()}),GA_ROOT),reinterpret_cast<HWND>(w.winId()));
+        InputKey mouse{true,VK_LBUTTON,0,false};
+        emit monitor->observed(mouse,true,outside,1000); emit monitor->observed(mouse,false,inside,1200);
+        emit monitor->observed(mouse,true,outside,1300); emit monitor->observed(mouse,false,outside,1400);
+        QCoreApplication::processEvents(); record->click();
+        const Script script=w.currentScript(); QCOMPARE(script.steps.size(),7);
+        QCOMPARE(script.steps[0].action,Action::Down); QCOMPARE(script.steps[2].action,Action::Up);
+        QCOMPARE(script.steps[2].position,inside); QCOMPARE(script.steps[4].action,Action::Down); QCOMPARE(script.steps[6].action,Action::Up);
+        w.close();
     }
 };
 QTEST_MAIN(Tests)

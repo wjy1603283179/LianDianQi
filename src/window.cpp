@@ -343,6 +343,7 @@ void Window::saveScript() {
 }
 void Window::start() {
     if(recording || engine.running()) return;
+    if(QApplication::activeModalWidget()) { notice(QStringLiteral("请先完成当前弹窗操作"),true); return; }
     Script s;
     if(tabs->currentIndex()==1) s=currentScript();
     else { s.steps={quick->value()}; s.startDelay=delay->value(); s.rounds=1; s.latch=s.steps[0].action==Action::Down; }
@@ -364,6 +365,7 @@ void Window::updateState(bool running) {
 }
 void Window::record() {
     if(recording) { endRecording(); return; }
+    if(QApplication::activeModalWidget()) { notice(QStringLiteral("请先完成当前弹窗操作"),true); return; }
     if(engine.running()) { notice(QStringLiteral("请先停止任务再录制"),true); return; }
     tabs->setCurrentIndex(1);
     QString error; if(!monitor.start(error)) { notice(error,true); return; }
@@ -380,7 +382,9 @@ void Window::appendRecorded(InputKey key,bool down,QPoint position,quint64 time)
         for(int id:{1,2,3}) { UINT m,v; if(Hotkeys::decode(hotkeys.sequence(id),m,v) && int(v)==key.code) return; }
     } else {
         HWND under=WindowFromPoint(POINT{position.x(),position.y()});
-        if(GetAncestor(under,GA_ROOT)==reinterpret_cast<HWND>(winId())) return;
+        // An already recorded press still needs its release when a drag ends
+        // over our window. Filtering that release loses later clicks too.
+        if(down && GetAncestor(under,GA_ROOT)==reinterpret_cast<HWND>(winId())) return;
     }
     QString id=key.identity();
     if(down && recordingHeld.contains(id)) return; // Drop hardware autorepeat; Down/Up preserves the hold duration.
@@ -419,8 +423,10 @@ void Window::settingsSave() {
     if(testMode) return;
     QSettings st; st.setValue("geometry",saveGeometry()); st.setValue("flow",QJsonDocument(currentScript().json()).toJson(QJsonDocument::Compact));
     st.setValue("quick",QJsonDocument(quick->value().json()).toJson(QJsonDocument::Compact)); st.setValue("delay",delay->value()); st.setValue("minimize",minimizeOnStart->isChecked()); st.setValue("tab",tabs->currentIndex());
-    for(const auto &pair:QList<QPair<int,QString>>{{1,"toggle"},{2,"stop"},{3,"record"}}) {
-        st.setValue(pair.second,hotkeys.sequence(pair.first).toString(QKeySequence::PortableText));
+    // A temporary registration conflict at startup must not erase the user's
+    // configured bindings when closing. Invalid edits already restore fields.
+    for(const auto &pair:QList<QPair<ShortcutField *,QString>>{{toggleShortcut,"toggle"},{stopShortcut,"stop"},{recordShortcut,"record"}}) {
+        st.setValue(pair.second,pair.first->keySequence().toString(QKeySequence::PortableText));
     }
     st.sync();
 }
