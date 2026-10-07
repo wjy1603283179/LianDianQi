@@ -1,5 +1,6 @@
 #include "window.h"
 #include "positionpicker.h"
+#include "logdialog.h"
 #include <QApplication>
 #include <QButtonGroup>
 #include <QDialog>
@@ -102,7 +103,7 @@ StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
     imagePreview->setStyleSheet("background:#f8f9fd;border:1px solid #e5e8f0;border-radius:8px;padding:8px;"); images->addWidget(imagePreview);
     auto *shot=new QPushButton(QStringLiteral("截图")); shot->setObjectName("templateCapture"); auto *importImage=new QPushButton(QStringLiteral("导入图像")); importImage->setObjectName("templateImport");
     images->addWidget(row({shot,importImage})); form->addRow(QStringLiteral("图像模板"),imageRow);
-    similarity=spin(60,100,88); similarity->setObjectName("imageSimilarity"); similarity->setMinimumWidth(65); similarityRow=row({similarity,label("%")}); form->addRow(QStringLiteral("相似度"),similarityRow);
+    similarity=new NoWheelSpinBox; similarity->setRange(60,100); similarity->setValue(88); similarity->setObjectName("imageSimilarity"); similarity->setMinimumWidth(65); similarityRow=row({similarity,label("%")}); form->addRow(QStringLiteral("相似度"),similarityRow);
     scaleMatch=new QCheckBox(QStringLiteral("适配缩放")); scaleMatch->setObjectName("imageScaleMatch"); scaleMatch->setChecked(true); form->addRow(QString(),scaleMatch);
     limitRegion=new QCheckBox(QStringLiteral("限定识别范围")); limitRegion->setObjectName("imageLimitRegion"); form->addRow(QString(),limitRegion);
     regionInfo=new QLabel; regionInfo->setWordWrap(true); regionInfo->setObjectName("imageRegionInfo"); auto *regionSelect=new QPushButton(QStringLiteral("框选")); regionSelect->setObjectName("imageRegionSelect");
@@ -332,7 +333,13 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     roundsRow=row({label(QStringLiteral("脚本循环")),rounds}); options->addSpacing(15); options->addWidget(roundsRow); options->addStretch(); stats=label(QStringLiteral("等待开始"),"muted"); options->addWidget(stats); root->addLayout(options);
     auto *footer=new QHBoxLayout; message=label(QStringLiteral("F6 启停 · F8 停止 · F7 录制"),"muted"); footer->addWidget(message,1);
     startButton=new QPushButton(QStringLiteral("▶  开始任务")); startButton->setObjectName("primary"); stopButton=new QPushButton(QStringLiteral("■  停止")); stopButton->setObjectName("stop"); stopButton->setEnabled(false);
-    footer->addWidget(startButton); footer->addWidget(stopButton); root->addLayout(footer);
+    logButton=new QPushButton(QStringLiteral("上次执行日志")); logButton->setObjectName("lastExecutionLog"); logButton->setEnabled(false);
+    footer->addWidget(logButton); footer->addWidget(startButton); footer->addWidget(stopButton); root->addLayout(footer);
+    connect(logButton,&QPushButton::clicked,this,&Window::showExecutionLog);
+    connect(&engine,&Engine::executionLogged,this,[this] {
+        logButton->setEnabled(engine.lastExecutionLog().valid()); saveExecutionLog();
+        if(logDialog) logDialog->setLog(engine.lastExecutionLog());
+    });
     connect(startButton,&QPushButton::clicked,this,&Window::start);
     connect(stopButton,&QPushButton::clicked,this,[this] { endRecording(); engine.stop(); notice(QStringLiteral("已停止")); });
     connect(&engine,&Engine::stateChanged,this,&Window::updateState);
@@ -374,6 +381,15 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     roundsRow->hide(); rounds->setEnabled(false); if(!testMode) settingsLoad();
 }
 Window::~Window() { shutdown(); }
+void Window::showExecutionLog() {
+    if(!engine.lastExecutionLog().valid()) return;
+    if(!logDialog) logDialog=new ExecutionLogDialog(this);
+    logDialog->setLog(engine.lastExecutionLog()); logDialog->show(); logDialog->raise(); logDialog->activateWindow();
+}
+void Window::saveExecutionLog() {
+    if(testMode) return;
+    QSettings st; st.setValue("lastExecutionLog",engine.lastExecutionLog().save()); st.sync();
+}
 void Window::notice(const QString &s,bool error) { message->setText(s); message->setStyleSheet(error?"color:#bd4c5b;":"color:#798397;"); message->setToolTip(s); }
 void Window::shortcutHint() {
     QStringList parts;
@@ -507,6 +523,7 @@ void Window::endRecording() {
 }
 void Window::settingsLoad() {
     QSettings st; restoreGeometry(st.value("geometry").toByteArray());
+    engine.restoreExecutionLog(ExecutionLog::load(st.value("lastExecutionLog").toByteArray())); logButton->setEnabled(engine.lastExecutionLog().valid());
     Script saved; QString error;
     if(Script::parse(st.value("flow").toByteArray(),saved,error,true)) setScript(saved);
     Step q; if(Step::parse(QJsonDocument::fromJson(st.value("quick").toByteArray()).object(),q,error) && int(q.action)<5) quick->setValue(q);
@@ -532,7 +549,7 @@ void Window::settingsSave() {
     }
     st.sync();
 }
-void Window::shutdown() { if(closing) return; closing=true; setProperty("shutdownRequested",true); endRecording(); engine.stop(); monitor.stop(); settingsSave(); hotkeys.clear(); }
+void Window::shutdown() { if(closing) return; closing=true; setProperty("shutdownRequested",true); if(logDialog) { logDialog->close(); logDialog=nullptr; } endRecording(); engine.stop(); monitor.stop(); settingsSave(); hotkeys.clear(); }
 void Window::closeEvent(QCloseEvent *event) { shutdown(); event->accept(); }
 void Window::showWindow() { if(closing || property("captureInProgress").toBool()) return; showNormal(); raise(); activateWindow(); }
 void Window::toggleTask() { if(recording) endRecording(); else if(engine.running()) engine.stop(); else start(); }

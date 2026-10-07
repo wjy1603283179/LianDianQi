@@ -1,7 +1,7 @@
 ﻿param(
     [string]$QtRoot = "$PSScriptRoot\..\.tools\Qt\6.5.3\msvc2019_64",
     [string]$BuildDir = "$PSScriptRoot\..\build",
-    [string]$Version = '1.1.0'
+    [string]$Version = '1.1.1'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path "$PSScriptRoot\..").Path

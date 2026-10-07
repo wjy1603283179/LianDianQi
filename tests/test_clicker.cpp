@@ -18,6 +18,9 @@
 #include <QWindow>
 #include <QBuffer>
 #include <QPainter>
+#include <QWheelEvent>
+#include <QTreeWidget>
+#include <QClipboard>
 
 class FakeInput : public InputSink {
 public:
@@ -62,6 +65,101 @@ class Tests : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() { QApplication::setStyle(QStyleFactory::create("Fusion")); }
+    void similarityIgnoresWheel() {
+        StepEditor editor(false); Step step; step.action=Action::IfImage; editor.setValue(step); editor.show();
+        auto *field=editor.findChild<QSpinBox *>("imageSimilarity"); QVERIFY(field);
+        for(bool focused:{false,true}) {
+            if(focused) field->setFocus(); else field->clearFocus();
+            for(int delta:{120,-120,1200,-1200}) {
+                QWheelEvent event(QPointF(10,10),field->mapToGlobal(QPoint(10,10)),QPoint(),QPoint(0,delta),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+                QApplication::sendEvent(field,&event); QCOMPARE(field->value(),88); QVERIFY(!event.isAccepted());
+                QWheelEvent inner(QPointF(10,10),field->mapToGlobal(QPoint(10,10)),QPoint(),QPoint(0,delta),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+                QApplication::sendEvent(field->findChild<QLineEdit *>(),&inner); QCOMPARE(field->value(),88);
+            }
+        }
+        QTest::keyClick(field,Qt::Key_Up); QCOMPARE(field->value(),89); QCOMPARE(editor.value().similarity,89);
+    }
+    void executionLogRecordsActualActionsAndPreservesPrevious() {
+        FakeInput input; Engine engine(input); Script script; script.startDelay=0;
+        Step repeat; repeat.action=Action::Repeat; repeat.count=4; repeat.interval=5;
+        Step wait; wait.action=Action::Wait; wait.duration=10; Step down; down.action=Action::Down;
+        script.steps={repeat,wait,down}; QString error; QSignalSpy done(&engine,&Engine::executionLogged);
+        QVERIFY(engine.start(script,error)); QTRY_COMPARE(done.count(),1);
+        const auto &log=engine.lastExecutionLog(); QVERIFY(log.valid()); QCOMPARE(log.outcome,QStringLiteral("完成"));
+        QCOMPARE(log.actions,quint64(5)); QCOMPARE(log.entries.size(),4); QCOMPARE(log.entries[0].count,quint64(4));
+        QCOMPARE(log.entries[0].action,actionName(Action::Repeat)); QVERIFY(log.entries[0].detail.contains(repeat.key.name())); QCOMPARE(log.entries[2].step,2); QCOMPARE(log.entries[3].action,QStringLiteral("自动抬起"));
+        QByteArray previous=log.save(); QVERIFY(!engine.start(Script{},error)); QCOMPARE(engine.lastExecutionLog().save(),previous);
+        script.startDelay=1000; QVERIFY(engine.start(script,error)); QCOMPARE(engine.lastExecutionLog().save(),previous);
+        engine.stop(); QCOMPARE(done.count(),2); QCOMPARE(engine.lastExecutionLog().outcome,QStringLiteral("停止")); QCOMPARE(engine.lastExecutionLog().actions,quint64(0));
+        engine.stop(); QCOMPARE(done.count(),2);
+    }
+    void executionLogFailureAndHoldRelease() {
+        FakeInput input; input.failAt=1; Engine engine(input); Script script; script.startDelay=0; script.steps={Step{}}; QString error;
+        QSignalSpy logged(&engine,&Engine::executionLogged); QVERIFY(engine.start(script,error)); QTRY_COMPARE(logged.count(),1);
+        auto log=engine.lastExecutionLog(); QCOMPARE(log.outcome,QStringLiteral("失败")); QCOMPARE(log.actions,quint64(0));
+        QCOMPARE(log.entries.size(),3); QCOMPARE(log.entries[0].action,QStringLiteral("仍处于按下状态")); QCOMPARE(log.entries[2].action,QStringLiteral("自动抬起"));
+        Step hold; hold.action=Action::Hold; hold.duration=15; script.steps={hold}; QVERIFY(engine.start(script,error)); QTRY_COMPARE(logged.count(),2);
+        log=engine.lastExecutionLog(); QCOMPARE(log.entries.size(),2); QCOMPARE(log.entries[0].action,actionName(Action::Hold));
+        QCOMPARE(log.entries[1].action,QStringLiteral("抬起")); QCOMPARE(log.entries[1].step,0); QCOMPARE(log.outcome,QStringLiteral("完成"));
+    }
+    void executionLogBoundedAndRoundtrip() {
+        ExecutionLog log; log.started=QDateTime::currentDateTime(); log.ended=log.started.addMSecs(6000); log.durationMs=6000;
+        log.outcome=QStringLiteral("完成"); log.actions=quint64(1)<<40; log.imageChecks=7; log.imageHits=5;
+        for(int i=0;i<5000;++i) log.append({i,i,i%10000,0,QStringLiteral("按一次"),QString::number(i),1});
+        QVERIFY(log.entries.size()<=ExecutionLog::MaxEntries); QCOMPARE(log.omitted+log.entries.size(),quint64(5000));
+        QCOMPARE(ExecutionLog::load(log.save()).save(),log.save()); QVERIFY(!ExecutionLog::load("broken").valid());
+        auto broken=QJsonDocument::fromJson(log.save()).object(); broken["imageHits"]="99"; QVERIFY(!ExecutionLog::load(QJsonDocument(broken).toJson()).valid());
+        for(auto &entry:log.entries) entry.detail=QString(2048,QChar(0x4e00));
+        auto compact=log.save(); QVERIFY(compact.size()<=2*1024*1024); auto restored=ExecutionLog::load(compact); QVERIFY(restored.valid());
+        QCOMPARE(restored.omitted+restored.entries.size(),quint64(5000));
+    }
+    void executionLogDialogAndPersistence() {
+        QTemporaryDir dir; auto previousFormat=QSettings::defaultFormat(); QString previousOrg=QCoreApplication::organizationName(),previousApp=QCoreApplication::applicationName();
+        auto restore=qScopeGuard([&] { QSettings::setDefaultFormat(previousFormat); QCoreApplication::setOrganizationName(previousOrg); QCoreApplication::setApplicationName(previousApp); });
+        QSettings::setDefaultFormat(QSettings::IniFormat); QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,dir.path());
+        QCoreApplication::setOrganizationName("DianXuLogTests"); QCoreApplication::setApplicationName("ExecutionLog");
+        { QSettings st; st.setValue("toggle",""); st.setValue("stop",""); st.setValue("record",""); }
+        QByteArray saved;
+        {
+            Window w; w.show(); auto *button=w.findChild<QPushButton *>("lastExecutionLog"); QVERIFY(button); QVERIFY(!button->isEnabled());
+            Script script; script.startDelay=0; Step wait; wait.action=Action::Wait; wait.duration=10; script.steps={wait}; QString error;
+            QVERIFY(w.execution().start(script,error)); QTRY_VERIFY(button->isEnabled()); saved=w.execution().lastExecutionLog().save();
+            script.steps[0].duration=1000; QVERIFY(w.execution().start(script,error)); button->click();
+            auto *dialog=w.findChild<QDialog *>("executionLogDialog"); QVERIFY(dialog); QVERIFY(dialog->isVisible()); QVERIFY(!dialog->isModal());
+            auto *table=dialog->findChild<QTreeWidget *>("logEntries"); QCOMPARE(table->topLevelItemCount(),1); QCOMPARE(table->topLevelItem(0)->text(3),actionName(Action::Wait));
+            dialog->findChild<QPushButton *>("copyExecutionLog")->click(); QVERIFY(QApplication::clipboard()->text().contains(QStringLiteral("完成")));
+            QVERIFY(w.execution().running()); w.stopTask(); QVERIFY(dialog->findChild<QLabel *>("logSummary")->text().contains(QStringLiteral("停止")));
+            saved=w.execution().lastExecutionLog().save(); dialog->close(); w.close();
+        }
+        { QSettings st; QCOMPARE(st.value("lastExecutionLog").toByteArray(),saved); }
+        { Window w; QCOMPARE(w.execution().lastExecutionLog().save(),saved); QVERIFY(w.findChild<QPushButton *>("lastExecutionLog")->isEnabled()); w.close(); }
+    }
+    void executionLogResponsiveAndClosesWithMainWindow() {
+        Window w(nullptr,true); w.show(); ExecutionLog log; log.started=QDateTime::currentDateTime(); log.ended=log.started.addMSecs(1234);
+        log.outcome=QStringLiteral("完成"); log.durationMs=1234; log.actions=3; log.imageChecks=2; log.imageHits=1;
+        log.append({15,15,0,0,actionName(Action::IfImage),QStringLiteral("大哭 · 找到 · 相似度 97.25%（阈值 88%） · 中心 (-160, 140) · 缩放 125%\n截图 1.23 ms · 识别 0.57 ms"),1});
+        log.append({20,20,1,0,actionName(Action::ClickMatch),QStringLiteral("鼠标左键 · (-160, 140)"),1});
+        log.append({30,230,2,0,actionName(Action::Repeat),QStringLiteral("间隔 100 ms · 2 次 · (1787, 272)"),2});
+        log.append({250,250,4,0,actionName(Action::IfImage),QStringLiteral("张嘴 · 未找到（阈值 88%） · 进入否则\n截图 1.23 ms · 识别 0.57 ms"),1});
+        log.append({260,260,7,0,actionName(Action::Wait),QStringLiteral("等待 500 ms · 开始等待"),1});
+        w.execution().restoreExecutionLog(log); w.execution().executionLogged(); w.findChild<QPushButton *>("lastExecutionLog")->click();
+        QPointer<QDialog> dialog=w.findChild<QDialog *>("executionLogDialog"); QVERIFY(dialog);
+        auto *table=dialog->findChild<QTreeWidget *>("logEntries"); auto *summary=dialog->findChild<QLabel *>("logSummary");
+        QVERIFY(summary->text().contains("50.0%")); QCOMPARE(table->topLevelItemCount(),5);
+        const QString output=qEnvironmentVariable("LIANDIANQI_VISUAL_OUTPUT"); if(!output.isEmpty()) QDir().mkpath(output);
+        for(auto size:{QSize(660,360),QSize(940,560)}) {
+            dialog->resize(size); QCoreApplication::processEvents(); QVERIFY(table->width()>600); QVERIFY(table->columnWidth(4)>200);
+            const QString result=table->topLevelItem(0)->text(4);
+            int height=QFontMetrics(table->font()).boundingRect(QRect(0,0,table->columnWidth(4)-12,10000),Qt::TextWordWrap,result).height();
+            QVERIFY(table->visualItemRect(table->topLevelItem(0)).height()>=height);
+            QCOMPARE(table->topLevelItem(2)->text(0),QStringLiteral("0.030 s\n0.230 s"));
+            QVERIFY(table->visualItemRect(table->topLevelItem(2)).height()>=2*QFontMetrics(table->font()).height()+14);
+            auto *copy=dialog->findChild<QPushButton *>("copyExecutionLog"); QVERIFY(dialog->rect().contains(QRect(copy->mapTo(dialog,QPoint()),copy->size())));
+            if(!output.isEmpty()) dialog->grab().save(output+QString("/execution-log-%1.png").arg(size.width()));
+        }
+        if(!output.isEmpty()) { dialog->showMaximized(); QTest::qWait(80); dialog->grab().save(output+"/execution-log-maximized.png"); }
+        w.close(); QVERIFY(!w.isVisible()); QVERIFY(!dialog || !dialog->isVisible());
+    }
     void imageEditorAndBranchLayout() {
         Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
         Step p; p.action=Action::IfImage; QImage image(64,40,QImage::Format_RGB32); image.fill(Qt::white); { QPainter painter(&image); painter.fillRect(10,8,30,20,Qt::blue); }

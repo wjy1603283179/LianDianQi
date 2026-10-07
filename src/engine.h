@@ -1,6 +1,7 @@
 #pragma once
 #include "input.h"
 #include "vision.h"
+#include "executionlog.h"
 #include <QElapsedTimer>
 #include <QMap>
 #include <QTimer>
@@ -17,12 +18,15 @@ public:
     int heldCount() const { return held.size(); }
     quint64 eventCount() const { return events; }
     bool timerActive() const { return timer.isActive(); }
+    const ExecutionLog &lastExecutionLog() const { return lastLog; }
+    void restoreExecutionLog(const ExecutionLog &log) { if(!active) lastLog=log; }
 signals:
     void stateChanged(bool);
     void progress(int step, int round, quint64 actions);
     void finished();
     void failed(QString);
     void matchEvaluated(int step, MatchResult result);
+    void executionLogged();
 private:
     void tick();
     bool key(const InputKey &, bool);
@@ -31,6 +35,10 @@ private:
     bool releaseAll();
     void finish();
     void recognize(const Step &);
+    void stopWithOutcome(const QString &outcome);
+    void logEntry(const QString &action, const QString &detail, int step=-2, bool merge=false);
+    void logStep(const Step &, const QString &detail=QString());
+    void endLog(const QString &outcome);
     InputSink &sink;
     QTimer timer;
     QElapsedTimer reporting;
@@ -40,6 +48,7 @@ private:
     quint64 events=0;
     bool repeating=false, holding=false;
     InputKey holdKey;
+    int holdStep=-1;
     QMap<QString,InputKey> held;
     struct Loop { int begin; int remaining; };
     QVector<Loop> loops;
@@ -50,4 +59,7 @@ private:
     std::unique_ptr<ScreenMatcher> screenMatcher;
     QThread *visionThread=nullptr;
     std::shared_ptr<std::atomic_bool> cancel;
+    ExecutionLog currentLog, lastLog;
+    QElapsedTimer logTimer;
+    bool logging=false, releaseFailed=false;
 };

@@ -15,6 +15,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QSettings>
 #include <algorithm>
 
 static QByteArray png(const QImage &image) { QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly); image.save(&buffer,"PNG"); return bytes; }
@@ -34,7 +35,7 @@ public:
     MatchResult recognize(const Step &,const std::atomic_bool &cancel) override {
         int i=calls.fetch_add(1); MatchResult r;
         if(waitForCancel) { while(!cancel.load()) QThread::msleep(1); r.cancelled=true; return r; }
-        r.found=results.value(i); r.bounds=QRect(-200,120,80,40); return r;
+        r.found=results.value(i); r.bounds=QRect(-200,120,80,40); r.score=r.found?97.25:0; r.scale=1.25; r.captureMicros=1234; r.matchMicros=567; return r;
     }
 };
 class Tests : public QObject {
@@ -60,6 +61,24 @@ private slots:
                 {condition(),action(Action::ClickMatch)}}) { s.steps=list; QVERIFY(!s.validate(error)); }
         auto empty=condition(); empty.templatePng.clear(); s.steps={empty,action(Action::EndIf)}; QVERIFY(!s.validate(error));
     }
+    void logContainsMatchingScoreAndOnlyExecutedBranch() {
+        MemoryInput input; FakeVision vision; vision.results={true,false}; Engine engine(input,nullptr,&vision);
+        Script s; s.startDelay=0; s.rounds=2; auto wait=action(Action::Wait); wait.duration=5; auto image=condition(); image.templateName="sample";
+        s.steps={image,action(Action::ClickMatch),action(Action::Else),wait,action(Action::EndIf)};
+        QString error; QSignalSpy logged(&engine,&Engine::executionLogged); QVERIFY(engine.start(s,error)); QTRY_COMPARE(logged.count(),1);
+        const auto &log=engine.lastExecutionLog(); QCOMPARE(log.imageChecks,quint64(2)); QCOMPARE(log.imageHits,quint64(1)); QCOMPARE(log.actions,quint64(1));
+        int checks=0,clicks=0,waits=0;
+        for(const auto &e:log.entries) {
+            if(e.action==actionName(Action::IfImage)) {
+                ++checks; QVERIFY(e.detail.contains("88%")); QVERIFY(e.detail.contains("1.23 ms")); QVERIFY(e.detail.contains("0.57 ms"));
+                if(e.round==0) { QVERIFY(e.detail.contains("97.25%")); QVERIFY(e.detail.contains("125%")); QVERIFY(e.detail.contains("(-160, 140)")); }
+                else { QVERIFY(e.detail.contains(QStringLiteral("未找到"))); QVERIFY(!e.detail.contains(QStringLiteral("相似度 0"))); }
+            }
+            if(e.action==actionName(Action::ClickMatch)) { ++clicks; QCOMPARE(e.round,0); QVERIFY(e.detail.contains("(-160, 140)")); }
+            if(e.action==actionName(Action::Wait)) { ++waits; QCOMPARE(e.round,1); }
+        }
+        QCOMPARE(checks,2); QCOMPARE(clicks,1); QCOMPARE(waits,1); QCOMPARE(ExecutionLog::load(log.save()).save(),log.save());
+    }
     void trueFalseAndNested() {
         for(bool outer:{true,false}) {
             MemoryInput input; FakeVision vision; vision.results={outer,false}; Engine engine(input,nullptr,&vision);
@@ -80,6 +99,7 @@ private slots:
         MemoryInput input; FakeVision vision; vision.waitForCancel=true;
         { Engine engine(input,nullptr,&vision); Script s; s.startDelay=0; s.steps={condition(),action(Action::ClickMatch),action(Action::EndIf)};
             QString error; QVERIFY(engine.start(s,error)); QTRY_COMPARE(vision.calls.load(),1); engine.stop(); QVERIFY(!engine.running()); QTest::qWait(50); QCOMPARE(input.clicks,0);
+            const auto &log=engine.lastExecutionLog(); QCOMPARE(log.imageChecks,quint64(0)); QCOMPARE(log.outcome,QStringLiteral("停止")); QCOMPARE(log.entries.last().action,QStringLiteral("取消识别"));
             QVERIFY(engine.start(s,error)); QTRY_COMPARE(vision.calls.load(),2);
         }
         QCOMPARE(input.clicks,0);
@@ -175,6 +195,11 @@ private slots:
             QCOMPARE(clicked[i],i+1);
         }
         if(!exe.isEmpty()) {
+            auto savedLog=[&] { QSettings settings(temp.filePath("DianXu/LianDianQi.ini"),QSettings::IniFormat); settings.sync(); return ExecutionLog::load(settings.value("lastExecutionLog").toByteArray()); };
+            QTRY_VERIFY_WITH_TIMEOUT(savedLog().valid(),10000); const auto log=savedLog();
+            QCOMPARE(log.outcome,QStringLiteral("完成")); QCOMPARE(log.imageChecks,quint64(36)); QCOMPARE(log.imageHits,quint64(36)); QCOMPARE(log.actions,quint64(36));
+            int checked=0; for(const auto &entry:log.entries) if(entry.action==actionName(Action::IfImage)) { ++checked; QVERIFY(entry.detail.contains(QStringLiteral("相似度"))); QVERIFY(entry.detail.contains(QStringLiteral("中心"))); }
+            QCOMPARE(checked,36);
             QProcess control; control.setProcessEnvironment(process.processEnvironment()); control.start(exe,{"--quit"}); QVERIFY(control.waitForFinished(10000)); QCOMPARE(control.exitCode(),0);
             QVERIFY(process.waitForFinished(10000)); QCOMPARE(process.exitCode(),0); qInfo()<<"Portable executable activated all 36 hyperlinks and exited normally at scale"<<scale; return;
         }

@@ -4,6 +4,14 @@
 #include <QLineEdit>
 #include <QKeySequence>
 #include <QWidget>
+#include <QSpinBox>
+
+class NoWheelSpinBox : public QSpinBox {
+public:
+    using QSpinBox::QSpinBox;
+protected:
+    void wheelEvent(QWheelEvent *) override;
+};
 
 class ComboBox : public QComboBox {
 public:

@@ -10,6 +10,9 @@
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QCloseEvent>
+#include <QPointer>
+
+class ExecutionLogDialog;
 
 class StepEditor : public QWidget {
     Q_OBJECT
@@ -74,6 +77,8 @@ private:
     void settingsSave();
     void notice(const QString &, bool error=false);
     void shortcutHint();
+    void showExecutionLog();
+    void saveExecutionLog();
     WindowsInput sink;
     Engine engine;
     Hotkeys hotkeys;
@@ -83,7 +88,8 @@ private:
     QWidget *quickPage, *flowPage;
     QListWidget *flow;
     QLabel *status, *message, *stats;
-    QPushButton *startButton, *stopButton, *recordButton;
+    QPushButton *startButton, *stopButton, *recordButton, *logButton;
+    QPointer<ExecutionLogDialog> logDialog;
     TimeField *delay;
     QSpinBox *rounds;
     ShortcutField *toggleShortcut, *stopShortcut, *recordShortcut;

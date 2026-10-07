@@ -4,7 +4,10 @@
 #include <QKeyEvent>
 #include <QFocusEvent>
 #include <QListView>
+#include <QWheelEvent>
 #include <cmath>
+
+void NoWheelSpinBox::wheelEvent(QWheelEvent *event) { event->ignore(); }
 
 ComboBox::ComboBox(QWidget *parent) : QComboBox(parent) {
     auto *list=new QListView;
