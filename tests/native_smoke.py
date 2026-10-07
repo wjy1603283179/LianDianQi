@@ -164,9 +164,9 @@ def run_tests(exe):
             completed = subprocess.run([str(exe),option],env=env,timeout=8)
             return completed.returncode
 
-        def launch(steps):
+        def launch(steps, rounds=1):
             script = folder / "script.json"
-            script.write_text(json.dumps({"format":"liandianqi-script","version":1,"rounds":1,"startDelayMs":300,"steps":steps}),encoding="utf-8")
+            script.write_text(json.dumps({"format":"liandianqi-script","version":1,"rounds":rounds,"startDelayMs":300,"steps":steps}),encoding="utf-8")
             p = subprocess.Popen([str(exe),"--script",str(script),"--run"],env=env)
             processes.append(p)
             wait_for(lambda:window_for(p.pid) is not None)
@@ -228,6 +228,24 @@ def run_tests(exe):
             assert [e[2] for e in events[baseline:baseline+10]] == [True,False]*5
             close(p)
             report["checks"].append("five real keyboard presses produce paired down/up events")
+            baseline = len(events)
+            p = launch([{"action":"down","input":key},{"action":"stopTask"},{"action":"click","input":key}],rounds=0)
+            wait_for(lambda:len(events)>=baseline+2)
+            pump_for(.2)
+            assert [e[2] for e in events[baseline:]] == [True,False]
+            assert not (u.GetAsyncKeyState(135) & 0x8000) and p.poll() is None
+            close(p)
+            report["checks"].append("End task stops all infinite script rounds, skips later actions and releases held F24")
+            baseline = len(events)
+            p = launch([{"action":"loop","count":2},{"action":"loop","count":0},{"action":"click","input":key},
+                {"action":"breakLoop"},{"action":"down","input":key},{"action":"endLoop"},{"action":"endLoop"},
+                {"action":"stopTask"},{"action":"click","input":key}],rounds=0)
+            wait_for(lambda:len(events)>=baseline+4)
+            pump_for(.2)
+            assert [e[2] for e in events[baseline:]] == [True,False]*2
+            assert not (u.GetAsyncKeyState(135) & 0x8000)
+            close(p)
+            report["checks"].append("Break loop exits only the inner infinite loop, preserves two outer rounds and skips its remaining actions")
             target = u.CreateWindowExW(0x80,"STATIC","DianXu mouse test target",0x10CF0000,20,20,400,220,None,None,k.GetModuleHandleW(None),None)
             assert target
             baseline = len(events)

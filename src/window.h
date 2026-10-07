@@ -1,6 +1,7 @@
 #pragma once
 #include "engine.h"
 #include "controls.h"
+#include "flowlist.h"
 #include <QMainWindow>
 #include <QComboBox>
 #include <QCheckBox>
@@ -20,6 +21,7 @@ public:
     explicit StepEditor(bool quick, QWidget *parent=nullptr);
     Step value() const;
     void setValue(const Step &);
+    void pasteImage();
 signals:
     void changed();
 private:
@@ -27,6 +29,7 @@ private:
     void capture(bool position);
     void setKey(const InputKey &);
     void selectImage(bool fromScreen);
+    void applyImage(const QImage &, const QString &name);
     void selectRegion();
     void refreshImage();
     QComboBox *action;
@@ -68,7 +71,6 @@ private:
     void updateState(bool);
     void addStep(Action);
     void refreshItem(QListWidgetItem *, const Step &);
-    void scheduleIndent();
     void saveScript();
     void record();
     void endRecording();
@@ -86,7 +88,8 @@ private:
     QTabWidget *tabs;
     StepEditor *quick, *editor;
     QWidget *quickPage, *flowPage;
-    QListWidget *flow;
+    FlowList *flow;
+    QLabel *addContext;
     QLabel *status, *message, *stats;
     QPushButton *startButton, *stopButton, *recordButton, *logButton;
     QPointer<ExecutionLogDialog> logDialog;
@@ -100,5 +103,4 @@ private:
     quint64 lastRecordTime=0;
     QMap<QString,InputKey> recordingHeld;
     int currentRunningStep=-1;
-    bool indentPending=false;
 };

@@ -8,8 +8,9 @@
 
 - 鼠标左/右/中/侧键，键盘任意单键；支持采集真实输入，区分左右修饰键和小键盘。
 - 连点、长按、按下、抬起、按一次；支持固定坐标、多屏及负坐标。
-- 拖动步骤卡片编排流程，支持等待、移动鼠标、嵌套循环、整条脚本循环和 JSON 导入保存。
-- 图像条件 if / else、框选识别范围、点击匹配矩形中心；截图模板支持等比例缩放，文字截图同样可用，无 OCR 或 OpenCV 运行依赖。
+- 拖动步骤卡片编排流程，条件和循环以完整区块显示，可收起、整块移动、复制和删除；支持等待、移动鼠标、嵌套循环、整条脚本循环和 JSON 导入保存。
+- 图像条件 if / else、框选识别范围、点击匹配矩形中心；支持截图、导入或粘贴截图模板，等比例缩放和文字截图，无 OCR 或 OpenCV 运行依赖。
+- 找到与未找到分支可分别添加动作、嵌套条件；支持“结束任务”和“退出当前循环”。
 - 上次执行日志：动作顺序与计数、图像命中相似度、位置及耗时，停止和失败也保留，重开可查看。
 - 录制键盘/鼠标按下抬起事件、点击位置和间隔；不录制移动轨迹和滚轮。
 - 全局快捷键：**F6 启停 / F8 停止 / F7 录制**，可修改并检测占用冲突。
@@ -65,7 +66,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```powershell
 python scripts\prepare-licenses.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\package.ps1
-python tests\native_smoke.py --exe dist\DianXu-1.1.1-windows-x64\LianDianQi.exe
+python tests\native_smoke.py --exe dist\DianXu-1.2.0-windows-x64\LianDianQi.exe
 ```
 
 关闭已运行的点序实例后，可运行以下真实双屏检查。`--change-layout` 会临时把副屏设为

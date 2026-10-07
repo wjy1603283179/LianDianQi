@@ -20,8 +20,8 @@ struct InputKey {
 };
 Q_DECLARE_METATYPE(InputKey)
 
-enum class Action { Repeat, Hold, Down, Up, Click, Wait, Move, LoopBegin, LoopEnd, IfImage, Else, EndIf, ClickMatch };
-constexpr int ActionCount=13;
+enum class Action { Repeat, Hold, Down, Up, Click, Wait, Move, LoopBegin, LoopEnd, IfImage, Else, EndIf, ClickMatch, StopTask, BreakLoop };
+constexpr int ActionCount=15;
 struct Step {
     Action action = Action::Click;
     InputKey key;
@@ -46,8 +46,10 @@ struct Script {
     int startDelay = 2000;
     bool latch = false; // Quick "down": retain the key until Stop, never saved in a script.
     QJsonObject json() const;
-    bool validate(QString &) const;
+    bool validate(QString &, bool allowDraft=false) const;
     static bool parse(const QByteArray &, Script &, QString &, bool allowDraft=false);
 };
 QString actionName(Action);
+Action actionFromId(const QString &);
 bool isInputAction(Action);
+bool isBlockBoundary(Action);

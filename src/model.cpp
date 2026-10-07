@@ -7,15 +7,17 @@
 #include <cmath>
 #include <windows.h>
 
-static const char *actionIds[] = {"repeat", "hold", "down", "up", "click", "wait", "move", "loop", "endLoop", "ifImage", "else", "endIf", "clickMatch"};
+static const char *actionIds[] = {"repeat", "hold", "down", "up", "click", "wait", "move", "loop", "endLoop", "ifImage", "else", "endIf", "clickMatch", "stopTask", "breakLoop"};
+Action actionFromId(const QString &id) { for(int i=0;i<ActionCount;++i) if(id==actionIds[i]) return Action(i); return Action(-1); }
 QString actionName(Action a) {
     static const QStringList names = {QStringLiteral("连点"), QStringLiteral("长按"), QStringLiteral("按下"),
         QStringLiteral("抬起"), QStringLiteral("按一次"), QStringLiteral("等待"), QStringLiteral("移动鼠标"),
         QStringLiteral("循环开始"), QStringLiteral("循环结束"), QStringLiteral("如果找到图像"),
-        QStringLiteral("否则"), QStringLiteral("结束条件"), QStringLiteral("点击匹配中心")};
+        QStringLiteral("否则"), QStringLiteral("结束条件"), QStringLiteral("点击匹配中心"), QStringLiteral("结束任务"), QStringLiteral("退出当前循环")};
     return names.value(int(a));
 }
 bool isInputAction(Action a) { return int(a)>=0 && int(a) <= int(Action::Click); }
+bool isBlockBoundary(Action a) { return a==Action::IfImage || a==Action::Else || a==Action::EndIf || a==Action::LoopBegin || a==Action::LoopEnd; }
 
 QString InputKey::identity() const {
     if (mouse) return QString("mouse:%1").arg(code);
@@ -98,6 +100,8 @@ QString Step::detail() const {
     case Action::Else: s=QStringLiteral("没有找到图像时执行"); break;
     case Action::EndIf: s=QStringLiteral("继续后续步骤"); break;
     case Action::ClickMatch: s=QStringLiteral("左键点击当前条件匹配区域的中心"); break;
+    case Action::StopTask: s=QStringLiteral("结束整次执行，不再执行后续步骤或脚本循环"); break;
+    case Action::BreakLoop: s=QStringLiteral("退出最内层循环，继续循环块之后的步骤"); break;
     }
     if (fixedPosition && key.mouse && isInputAction(action)) s += QStringLiteral(" · (%1, %2)").arg(position.x()).arg(position.y());
     return s;
@@ -114,8 +118,7 @@ QJsonObject Step::json() const {
 }
 bool Step::parse(const QJsonObject &o, Step &s, QString &error) {
     QString id = o.value("action").toString();
-    int found = -1;
-    for (int i=0; i<ActionCount; ++i) if (id == actionIds[i]) found = i;
+    int found = int(actionFromId(id));
     if (found < 0) { error = QStringLiteral("未知步骤：%1").arg(id); return false; }
     s.action = Action(found);
     if (isInputAction(s.action) && (!o.value("input").isObject() || !InputKey::parse(o.value("input").toObject(), s.key, error))) return false;
@@ -149,7 +152,7 @@ QJsonObject Script::json() const {
     QJsonArray array; for (const auto &s : steps) array.append(s.json());
     return {{"format", "liandianqi-script"}, {"version", 1}, {"rounds", rounds}, {"startDelayMs", startDelay}, {"steps", array}};
 }
-bool Script::validate(QString &error) const {
+bool Script::validate(QString &error,bool allowDraft) const {
     if (steps.isEmpty() || steps.size() > 10000) { error = QStringLiteral("脚本必须包含 1 到 10000 个步骤"); return false; }
     if (rounds < 0 || rounds > 1000000 || startDelay < 0 || startDelay > 60000) { error = QStringLiteral("循环次数或启动延迟无效"); return false; }
     struct Block { Action kind; int begin; bool hasElse=false; bool trueBranch=true; };
@@ -160,10 +163,10 @@ bool Script::validate(QString &error) const {
         if (steps[i].action == Action::LoopBegin) {
             stack.append({Action::LoopBegin,i});
         } else if (steps[i].action == Action::LoopEnd) {
-            if(stack.isEmpty() || stack.last().kind!=Action::LoopBegin || stack.last().begin==i-1) { error=QStringLiteral("第 %1 步的循环未配对、交叉或循环体为空").arg(i+1); return false; }
+            if(stack.isEmpty() || stack.last().kind!=Action::LoopBegin || (!allowDraft && stack.last().begin==i-1)) { error=QStringLiteral("第 %1 步的循环未配对、交叉或循环体为空").arg(i+1); return false; }
             stack.removeLast();
         } else if(steps[i].action==Action::IfImage) {
-            if(steps[i].templatePng.isEmpty() || (steps[i].limitRegion && steps[i].searchRegion.isEmpty())) { error=QStringLiteral("第 %1 步未设置图像模板或识别范围").arg(i+1); return false; }
+            if(!allowDraft && (steps[i].templatePng.isEmpty() || (steps[i].limitRegion && steps[i].searchRegion.isEmpty()))) { error=QStringLiteral("第 %1 步未设置图像模板或识别范围").arg(i+1); return false; }
             stack.append({Action::IfImage,i});
         } else if(steps[i].action==Action::Else) {
             if(stack.isEmpty() || stack.last().kind!=Action::IfImage || stack.last().hasElse) { error=QStringLiteral("第 %1 步的否则未配对或重复").arg(i+1); return false; }
@@ -174,10 +177,14 @@ bool Script::validate(QString &error) const {
         } else if(steps[i].action==Action::ClickMatch) {
             bool match=false; for(const auto &block:stack) if(block.kind==Action::IfImage && block.trueBranch) match=true;
             if(!match) { error=QStringLiteral("第 %1 步的匹配中心点击须放在找到图像的分支内").arg(i+1); return false; }
+        } else if(steps[i].action==Action::BreakLoop) {
+            bool loop=false; for(const auto &block:stack) if(block.kind==Action::LoopBegin) loop=true;
+            if(!loop) { error=QStringLiteral("第 %1 步的退出当前循环须放在循环块内").arg(i+1); return false; }
         }
         if(stack.size()>16) { error=QStringLiteral("循环和条件合计最多嵌套 16 层"); return false; }
     }
     if (!stack.isEmpty()) { error = QStringLiteral("循环或条件缺少结束步骤"); return false; }
+    if(QJsonDocument(json()).toJson(QJsonDocument::Compact).size()>4*1024*1024) { error=QStringLiteral("脚本超过 4 MB，请减少图像模板"); return false; }
     return true;
 }
 bool Script::parse(const QByteArray &bytes, Script &out, QString &error, bool allowDraft) {

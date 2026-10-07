@@ -12,12 +12,14 @@ bool Engine::start(const Script &s, QString &error) {
     script=s; active=true; index=round=repeats=0; events=0; repeating=holding=false; loops.clear(); conditions.clear(); reporting.start();
     currentLog={}; currentLog.started=QDateTime::currentDateTime(); logTimer.start(); logging=true; releaseFailed=false;
     if(s.startDelay) logEntry(QStringLiteral("启动延迟"),QStringLiteral("%1 ms").arg(s.startDelay),-1);
-    ends.clear(); alternatives.clear(); QVector<int> blocks;
+    ends.clear(); alternatives.clear(); loopEnds.clear(); QVector<int> blocks,loopBlocks;
     for(int i=0;i<s.steps.size();++i) {
         auto a=s.steps[i].action;
         if(a==Action::IfImage) blocks.append(i);
         else if(a==Action::Else) alternatives[blocks.last()]=i;
         else if(a==Action::EndIf) { ends[blocks.last()]=i; blocks.removeLast(); }
+        else if(a==Action::LoopBegin) loopBlocks.append(i);
+        else if(a==Action::LoopEnd) { loopEnds[loopBlocks.last()]=i; loopBlocks.removeLast(); }
     }
     emit stateChanged(true); emit progress(-1,0,0); timer.start(s.startDelay); return true;
 }
@@ -82,10 +84,10 @@ bool Engine::click(const InputKey &k) {
     if (!key(k,true) || !key(k,false)) return false;
     ++events; return true;
 }
-void Engine::finish() {
+void Engine::finish(bool force) {
     timer.stop();
-    if (script.latch && !held.isEmpty()) { emit progress(index-1,round,events); return; }
-    active=false; conditions.clear(); screenMatcher.reset(); bool ok=releaseAll();
+    if (!force && script.latch && !held.isEmpty()) { emit progress(index-1,round,events); return; }
+    active=false; conditions.clear(); loops.clear(); screenMatcher.reset(); bool ok=releaseAll();
     endLog(ok?QStringLiteral("完成"):QStringLiteral("失败")); emit stateChanged(false); if(ok) emit finished();
 }
 void Engine::recognize(const Step &step) {
@@ -156,7 +158,7 @@ void Engine::tick() {
     case Action::Click: if (!click(s.key)) return; logStep(s); break;
     case Action::Wait: logStep(s,s.detail()+QStringLiteral(" · 开始等待")); ++index; timer.start(s.duration); return;
     case Action::Move: logStep(s); ++events; break;
-    case Action::LoopBegin: loops.append({index,s.count}); logStep(s); break;
+    case Action::LoopBegin: loops.append({index,s.count,int(conditions.size())}); logStep(s); break;
     case Action::LoopEnd:
         if (loops.isEmpty()) { fail(QStringLiteral("循环栈错误")); return; }
         if (loops.last().remaining==0 || --loops.last().remaining>0) {
@@ -181,6 +183,12 @@ void Engine::tick() {
         if(!click(InputKey{})) return;
         const auto p=bounds.topLeft()+QPoint(bounds.width()/2,bounds.height()/2);
         logStep(s,QStringLiteral("鼠标左键 · (%1, %2)").arg(p.x()).arg(p.y())); break;
+    }
+    case Action::StopTask: logStep(s); finish(true); return;
+    case Action::BreakLoop: {
+        if(loops.isEmpty()) { fail(QStringLiteral("退出当前循环须放在循环块内")); return; }
+        auto loop=loops.takeLast(); logStep(s,QStringLiteral("退出步骤 %1 的循环，继续块后的动作").arg(loop.begin+1));
+        conditions.resize(loop.conditionDepth); index=loopEnds.value(loop.begin)+1; timer.start(1); return;
     }
     }
     ++index; timer.start(1); // Yield between immediate actions, including endless loops.

@@ -60,6 +60,33 @@ private slots:
                 {condition(),action(Action::Else),action(Action::ClickMatch),action(Action::EndIf)},
                 {condition(),action(Action::ClickMatch)}}) { s.steps=list; QVERIFY(!s.validate(error)); }
         auto empty=condition(); empty.templatePng.clear(); s.steps={empty,action(Action::EndIf)}; QVERIFY(!s.validate(error));
+        s.steps={action(Action::BreakLoop)}; QVERIFY(!s.validate(error));
+        s.steps={condition(),action(Action::StopTask),action(Action::Else),action(Action::StopTask),action(Action::EndIf)}; QVERIFY(s.validate(error));
+    }
+    void foundImageEndsAllRoundsAndReleasesHeldKeys() {
+        MemoryInput input; FakeVision vision; vision.results={true}; Engine engine(input,nullptr,&vision); Script s; s.startDelay=0; s.rounds=0;
+        s.steps={action(Action::Down),condition(),action(Action::StopTask),action(Action::Else),action(Action::Click),action(Action::EndIf),action(Action::Click)};
+        QString error; QSignalSpy finished(&engine,&Engine::finished); QVERIFY(engine.start(s,error)); QTRY_COMPARE(finished.count(),1);
+        QVERIFY(!engine.running()); QCOMPARE(engine.heldCount(),0); QCOMPARE(engine.eventCount(),quint64(1)); QCOMPARE(input.clicks,1); QCOMPARE(vision.calls.load(),1);
+        bool end=false,release=false; for(const auto &entry:engine.lastExecutionLog().entries) { end|=entry.action==actionName(Action::StopTask); release|=entry.action==QStringLiteral("自动抬起"); }
+        QVERIFY(end); QVERIFY(release);
+    }
+    void breakInnerLoopPreservesEnclosingMatchAndOuterLoop() {
+        MemoryInput input; FakeVision vision; vision.results={true,true,true,true,true,true}; Engine engine(input,nullptr,&vision);
+        Script s; s.startDelay=0; auto outer=action(Action::LoopBegin); outer.count=2; auto inner=outer; inner.count=0;
+        s.steps={outer,condition(),inner,condition(),action(Action::BreakLoop),action(Action::Else),action(Action::Click),action(Action::EndIf),
+            action(Action::Click),action(Action::LoopEnd),action(Action::ClickMatch),action(Action::Else),action(Action::Click),action(Action::EndIf),action(Action::LoopEnd),action(Action::Click)};
+        QString error; QSignalSpy finished(&engine,&Engine::finished); QVERIFY2(engine.start(s,error),qPrintable(error)); QTRY_COMPARE(finished.count(),1);
+        QCOMPARE(vision.calls.load(),4); QCOMPARE(input.clicks,3); QCOMPARE(input.positions.size(),2); QCOMPARE(engine.heldCount(),0);
+        for(auto position:input.positions) QCOMPARE(position,QPoint(-160,140));
+    }
+    void otherwiseNestedIfRunsOnlyAfterPreviousMiss() {
+        for(bool first:{true,false}) {
+            MemoryInput input; FakeVision vision; vision.results={first,true}; Engine engine(input,nullptr,&vision); Script s; s.startDelay=0;
+            s.steps={condition(),action(Action::ClickMatch),action(Action::Else),condition(),action(Action::StopTask),action(Action::Else),action(Action::Click),action(Action::EndIf),action(Action::EndIf),action(Action::Click)};
+            QString error; QSignalSpy finished(&engine,&Engine::finished); QVERIFY(engine.start(s,error)); QTRY_COMPARE(finished.count(),1);
+            QCOMPARE(vision.calls.load(),first?1:2); QCOMPARE(input.clicks,first?2:0); QCOMPARE(engine.lastExecutionLog().imageChecks,quint64(first?1:2));
+        }
     }
     void logContainsMatchingScoreAndOnlyExecutedBranch() {
         MemoryInput input; FakeVision vision; vision.results={true,false}; Engine engine(input,nullptr,&vision);

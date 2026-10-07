@@ -21,6 +21,16 @@
 #include <QWheelEvent>
 #include <QTreeWidget>
 #include <QClipboard>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QMenu>
+
+static Step blockStep(Action action) { Step s; s.action=action; return s; }
+static Step imageCondition() {
+    Step s=blockStep(Action::IfImage); QImage image(64,40,QImage::Format_RGB32); image.fill(Qt::white);
+    { QPainter painter(&image); painter.fillRect(10,8,30,20,Qt::blue); }
+    QBuffer buffer(&s.templatePng); buffer.open(QIODevice::WriteOnly); image.save(&buffer,"PNG"); s.templateName=QStringLiteral("测试模板"); return s;
+}
 
 class FakeInput : public InputSink {
 public:
@@ -39,6 +49,16 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override { ++clicks; event->accept(); }
     void mouseReleaseEvent(QMouseEvent *event) override { ++releases; event->accept(); }
+};
+class DragObserver : public QObject {
+public:
+    std::atomic_bool pressed=false,entered=false,moved=false;
+    bool eventFilter(QObject *,QEvent *event) override {
+        if(event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseButtonDblClick) pressed=true;
+        if(event->type()==QEvent::DragEnter) entered=true;
+        if(event->type()==QEvent::DragMove) moved=true;
+        return false;
+    }
 };
 static QList<QRect> nativeMonitorRects() {
     QList<QRect> rects;
@@ -61,10 +81,157 @@ static UINT nativeClickAt(const QPoint &point) {
     click[1].mi.dwFlags=MOUSEEVENTF_LEFTDOWN; click[2].mi.dwFlags=MOUSEEVENTF_LEFTUP;
     return SendInput(3,click,sizeof(INPUT));
 }
+static bool clipboardScreenshot(const QImage &source,HWND owner) {
+    if(QGuiApplication::platformName()=="offscreen") { QApplication::clipboard()->setImage(source); return true; }
+    // Publish an immediate Windows bitmap, the format used by screenshot tools,
+    // instead of Qt's delayed OLE data object (clipboard observers can stall it).
+    if(!OpenClipboard(owner)) return false;
+    auto close=qScopeGuard([] { CloseClipboard(); });
+    if(!EmptyClipboard()) return false;
+    const auto image=source.convertToFormat(QImage::Format_RGB32);
+    BITMAPINFOHEADER header={}; header.biSize=sizeof(header); header.biWidth=image.width(); header.biHeight=-image.height();
+    header.biPlanes=1; header.biBitCount=32; header.biCompression=BI_RGB;
+    auto data=GlobalAlloc(GMEM_MOVEABLE,sizeof(header)+size_t(image.sizeInBytes())); if(!data) return false;
+    auto *bytes=static_cast<char *>(GlobalLock(data)); if(!bytes) { GlobalFree(data); return false; }
+    memcpy(bytes,&header,sizeof(header)); memcpy(bytes+sizeof(header),image.constBits(),size_t(image.sizeInBytes())); GlobalUnlock(data);
+    if(!SetClipboardData(CF_DIB,data)) { GlobalFree(data); return false; } return true;
+}
 class Tests : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() { QApplication::setStyle(QStyleFactory::create("Fusion")); }
+    void clipboardTemplatePasteAndKeyboard() {
+        Window w(nullptr,true); auto condition=imageCondition(); condition.similarity=93; condition.limitRegion=true; condition.searchRegion=QRect(-200,20,500,300);
+        Script s; s.steps={condition,blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::EndIf)}; w.setScript(s); w.show(); w.activateWindow(); QTest::qWait(30);
+        StepEditor *editor=nullptr; for(auto *candidate:w.findChildren<StepEditor *>()) if(candidate->findChild<QComboBox *>("stepAction")) editor=candidate;
+        QVERIFY(editor); QImage image(80,48,QImage::Format_RGB32); image.fill(Qt::white); { QPainter painter(&image); painter.fillRect(16,12,40,20,Qt::red); }
+        // Unexpected clipboard contention must fail cleanly rather than leave a
+        // modal message box waiting indefinitely in an unattended test run.
+        QTimer dismiss; dismiss.setInterval(100); connect(&dismiss,&QTimer::timeout,&w,[] { if(auto *dialog=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) dialog->accept(); }); dismiss.start();
+        auto putImage=[&w](const QImage &source) {
+            for(int attempt=0;attempt<10;++attempt) {
+                QTest::qWait(50); if(!clipboardScreenshot(source,reinterpret_cast<HWND>(w.winId()))) continue; QTest::qWait(50);
+                if(QApplication::clipboard()->image().convertToFormat(QImage::Format_RGB32)==source) return true;
+            }
+            return false;
+        };
+        QVERIFY(putImage(image));
+        QSignalSpy changed(editor,&StepEditor::changed); editor->findChild<QPushButton *>("templatePaste")->click();
+        QCOMPARE(changed.count(),1); auto pasted=w.currentScript().steps[0]; QCOMPARE(QImage::fromData(pasted.templatePng,"PNG").convertToFormat(QImage::Format_RGB32),image);
+        QCOMPARE(pasted.similarity,93); QCOMPARE(pasted.searchRegion,condition.searchRegion); QVERIFY(pasted.templateName.contains(QStringLiteral("粘贴截图")));
+        { QPainter painter(&image); painter.fillRect(16,12,40,20,Qt::green); }
+        QVERIFY(putImage(image));
+        auto *list=w.findChild<FlowList *>("flow"); list->setFocus(); QCoreApplication::processEvents();
+        QSignalSpy pasteKey(list,&FlowList::pasteRequested); QTest::keyClick(list,Qt::Key_V,Qt::ControlModifier); QCOMPARE(pasteKey.count(),1);
+        QCOMPARE(changed.count(),2); QCOMPARE(QImage::fromData(w.currentScript().steps[0].templatePng,"PNG").convertToFormat(QImage::Format_RGB32),image);
+        const QByteArray saved=editor->value().templatePng;
+        for(QImage invalid:{QImage(),QImage(4,4,QImage::Format_RGB32),QImage(1100,20,QImage::Format_RGB32),QImage(80,48,QImage::Format_RGB32)}) {
+            if(invalid.isNull()) QApplication::clipboard()->setText("plain text"); else { invalid.fill(Qt::white); QVERIFY(putImage(invalid)); }
+            QTimer::singleShot(0,&w,[] { if(auto *dialog=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) dialog->accept(); });
+            editor->findChild<QPushButton *>("templatePaste")->click(); QCOMPARE(editor->value().templatePng,saved); QCOMPARE(changed.count(),2);
+        }
+        w.close();
+    }
+    void blocksInsertIntoTrueElseAndNestedIf() {
+        Window w(nullptr,true); Script s; s.steps={imageCondition(),blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::EndIf)}; w.setScript(s);
+        auto *list=w.findChild<FlowList *>("flow"); QString error; list->setCurrentRow(2);
+        QCOMPARE(list->insertionContext(2),QStringLiteral("添加到：未找到时")); QVERIFY(list->addAction(Action::Wait,error));
+        QCOMPARE(w.currentScript().steps[3].action,Action::Wait); list->setCurrentRow(2); QVERIFY(list->addAction(Action::IfImage,error));
+        auto steps=w.currentScript().steps; QCOMPARE(steps.size(),9); QCOMPARE(steps[4].action,Action::IfImage); QCOMPARE(steps[5].action,Action::ClickMatch);
+        QCOMPARE(steps[6].action,Action::Else); QCOMPARE(steps[7].action,Action::EndIf); QCOMPARE(steps[8].action,Action::EndIf);
+        QCOMPARE(list->node(4).depth,1); QCOMPARE(list->node(5).depth,2); QCOMPARE(list->node(4).ancestors.last().alternative,true);
+        list->setCurrentRow(0); QVERIFY(list->addAction(Action::StopTask,error)); QCOMPARE(w.currentScript().steps[2].action,Action::StopTask);
+        list->setCurrentRow(6); QVERIFY(!list->addAction(Action::Else,error));
+        QVERIFY(w.currentScript().validate(error,true)); w.close();
+    }
+    void largeBlockCopyAndPastePreserveOriginalWhenOverLimit() {
+        QImage image(512,768,QImage::Format_RGB32); quint32 seed=0x12345678;
+        for(int y=0;y<image.height();++y) { auto *line=reinterpret_cast<QRgb *>(image.scanLine(y)); for(int x=0;x<image.width();++x) { seed^=seed<<13; seed^=seed>>17; seed^=seed<<5; line[x]=seed|0xff000000; } }
+        auto condition=imageCondition(); condition.templatePng.clear(); QBuffer buffer(&condition.templatePng); buffer.open(QIODevice::WriteOnly); QVERIFY(image.save(&buffer,"PNG")); QVERIFY(condition.templatePng.size()<2*1024*1024);
+        Script s; s.steps={condition,blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::EndIf)};
+        Window w(nullptr,true); w.setScript(s); auto *list=w.findChild<FlowList *>("flow"); QString error;
+        QVERIFY(list->duplicateSelected(error)); const auto saved=w.currentScript().json(); QVERIFY(!list->duplicateSelected(error)); QVERIFY(error.contains("4 MB")); QCOMPARE(w.currentScript().json(),saved);
+        list->setCurrentRow(7); QVERIFY(list->addAction(Action::IfImage,error));
+        StepEditor *editor=nullptr; for(auto *candidate:w.findChildren<StepEditor *>()) if(candidate->findChild<QComboBox *>("stepAction")) editor=candidate;
+        QVERIFY(editor); const auto beforePaste=w.currentScript().json();
+        QVERIFY(clipboardScreenshot(image,reinterpret_cast<HWND>(w.winId()))); QTest::qWait(100); QCOMPARE(QApplication::clipboard()->image().convertToFormat(QImage::Format_RGB32),image);
+        QTimer::singleShot(0,&w,[] { if(auto *dialog=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) dialog->accept(); });
+        editor->pasteImage(); QCOMPARE(w.currentScript().json(),beforePaste);
+        bool warned=false; for(auto *label:w.findChildren<QLabel *>()) warned|=label->text().contains(QStringLiteral("已保留原图像模板")); QVERIFY(warned);
+        w.close();
+    }
+    void branchInlineAddChoosesActionsInsideElse() {
+        Window w(nullptr,true); Script s; s.steps={imageCondition(),blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::EndIf)}; w.setScript(s); w.show();
+        auto *list=w.findChild<FlowList *>("flow"); list->refreshStructure(); QCoreApplication::processEvents(); QRect branch=list->visualItemRect(list->item(2));
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(branch.right()-32,branch.bottom()-15));
+        auto *menu=w.findChild<QMenu *>("branchAddMenu"); QVERIFY(menu); QVERIFY(menu->isVisible()); QAction *wait=nullptr;
+        for(auto *entry:menu->actions()) { if(entry->data().toInt()==int(Action::Wait)) wait=entry; if(entry->data().toInt()==int(Action::ClickMatch) || entry->data().toInt()==int(Action::BreakLoop)) QVERIFY(!entry->isEnabled()); }
+        QVERIFY(wait); wait->trigger(); QCOMPARE(w.currentScript().steps[3].action,Action::Wait); QCOMPARE(w.currentScript().steps[4].action,Action::EndIf); w.close();
+    }
+    void blocksCopyDeleteMoveAndCollapseAsUnits() {
+        Window w(nullptr,true); Script s; s.steps={imageCondition(),blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::Wait),blockStep(Action::EndIf),blockStep(Action::Wait)}; w.setScript(s);
+        auto *list=w.findChild<FlowList *>("flow"); QString error;
+        auto original=w.currentScript().json(); QVERIFY(!list->moveBlock(0,3,error)); QCOMPARE(w.currentScript().json(),original);
+        QVERIFY(!list->moveBlock(1,4,error)); QCOMPARE(w.currentScript().json(),original); // Match center cannot move into the unpaired false branch.
+        QVERIFY(list->moveBlock(0,6,error)); QCOMPARE(w.currentScript().steps[0].action,Action::Wait); QCOMPARE(w.currentScript().steps[1].action,Action::IfImage);
+        list->setCurrentRow(1); QVERIFY(list->duplicateSelected(error)); QCOMPARE(list->count(),11); QCOMPARE(w.currentScript().steps[6].action,Action::IfImage);
+        list->setCurrentRow(10); list->removeSelected(); QCOMPARE(list->count(),6); // Closing marker owns the entire copied block.
+        list->setCurrentRow(3); list->removeSelected(); QCOMPARE(list->count(),4); QCOMPARE(w.currentScript().steps[3].action,Action::EndIf);
+        list->setCurrentRow(1); QVERIFY(w.currentScript().validate(error));
+        w.show(); QCoreApplication::processEvents(); QTest::mouseDClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(1)).center());
+        QTest::mouseRelease(list->viewport(),Qt::LeftButton);
+        QVERIFY(list->item(2)->isHidden()); QVERIFY(list->item(3)->isHidden()); list->reveal(2); QVERIFY(!list->item(2)->isHidden());
+        list->setCurrentRow(1); list->removeSelected(); QCOMPARE(list->count(),1); QCOMPARE(w.currentScript().steps[0].action,Action::Wait); w.close();
+    }
+    void blockLayoutAndBranchActionsRemainUsable() {
+        Window w(nullptr,true); Script s; auto loop=blockStep(Action::LoopBegin); loop.count=5;
+        s.steps={loop,imageCondition(),blockStep(Action::BreakLoop),blockStep(Action::Else),imageCondition(),blockStep(Action::StopTask),blockStep(Action::Else),blockStep(Action::Wait),blockStep(Action::EndIf),blockStep(Action::EndIf),blockStep(Action::LoopEnd),blockStep(Action::Click)};
+        w.setScript(s); w.show(); auto *list=w.findChild<FlowList *>("flow"); auto *tabs=w.findChild<QTabWidget *>("tabs");
+        const QString output=qEnvironmentVariable("LIANDIANQI_VISUAL_OUTPUT"); if(!output.isEmpty()) QDir().mkpath(output);
+        for(auto size:{QSize(800,480),QSize(980,680),QSize(1200,900)}) {
+            w.resize(size); QCoreApplication::processEvents(); QCOMPARE(w.width(),size.width());
+            list->setCurrentRow(3); QCOMPARE(w.findChild<QLabel *>("addContext")->text(),QStringLiteral("添加到：未找到时"));
+            auto *add=w.findChild<QPushButton *>("addStep"); QVERIFY(add->isVisible()); QVERIFY(add->width()>=add->minimumSizeHint().width());
+            QVERIFY(list->width()>250); QCOMPARE(list->node(5).depth,3);
+            QPoint navigation=tabs->tabBar()->mapTo(&w,QPoint()); tabs->setCurrentIndex(0); QCoreApplication::processEvents(); QCOMPARE(tabs->tabBar()->mapTo(&w,QPoint()),navigation);
+            tabs->setCurrentIndex(1); QCoreApplication::processEvents(); QCOMPARE(tabs->tabBar()->mapTo(&w,QPoint()),navigation);
+            list->verticalScrollBar()->setValue(0); if(!output.isEmpty()) w.grab().save(output+QString("/blocks-%1.png").arg(size.width()));
+        }
+        if(!output.isEmpty()) { w.showMaximized(); QTest::qWait(50); w.grab().save(output+"/blocks-maximized.png"); }
+        w.close();
+    }
+    void nativeDragMovesActionIntoElseBranch() {
+        if(QGuiApplication::platformName()=="offscreen") QSKIP("Requires native Windows drag and drop.");
+        POINT previous={}; GetPhysicalCursorPos(&previous); auto restore=qScopeGuard([&] { INPUT up={}; up.type=INPUT_MOUSE; up.mi.dwFlags=MOUSEEVENTF_LEFTUP; SendInput(1,&up,sizeof(INPUT)); SetPhysicalCursorPos(previous.x,previous.y); });
+        Window w(nullptr,true); Script s; s.steps={blockStep(Action::Wait),imageCondition(),blockStep(Action::ClickMatch),blockStep(Action::Else),blockStep(Action::EndIf)};
+        w.setScript(s); w.resize(980,900); w.move(40,40); w.show(); w.raise(); w.activateWindow(); QTest::qWait(100);
+        auto *list=w.findChild<FlowList *>("flow"); list->refreshStructure();
+        auto physical=[&](QPoint point) { POINT origin={0,0}; ClientToScreen(reinterpret_cast<HWND>(w.winId()),&origin); QPoint local=list->viewport()->mapTo(&w,point); return QPoint(origin.x+qRound(local.x()*w.devicePixelRatioF()),origin.y+qRound(local.y()*w.devicePixelRatioF())); };
+        QPoint source=physical(list->visualItemRect(list->item(0)).center()),target=physical(list->visualItemRect(list->item(3)).center());
+        QVERIFY(SetForegroundWindow(reinterpret_cast<HWND>(w.winId())));
+        // OLE can block GUI-thread timers during a drag. Drive input from a finite
+        // helper thread so release still arrives even inside the native drag loop.
+        const HWND hwnd=reinterpret_cast<HWND>(w.winId());
+        std::atomic_bool inputWasOverWindow=false;
+        DragObserver observer; list->viewport()->installEventFilter(&observer);
+        std::unique_ptr<QThread> driver(QThread::create([source,target,hwnd,&inputWasOverWindow,&observer] {
+            auto await=[](const std::atomic_bool &flag) { for(int i=0;i<200 && !flag.load();++i) QThread::msleep(10); return flag.load(); };
+            QThread::msleep(250); SetForegroundWindow(hwnd); SetPhysicalCursorPos(source.x(),source.y()); QThread::msleep(100);
+            inputWasOverWindow=GetForegroundWindow()==hwnd && GetAncestor(WindowFromPoint({source.x(),source.y()}),GA_ROOT)==hwnd;
+            INPUT down={}; down.type=INPUT_MOUSE; down.mi.dwFlags=MOUSEEVENTF_LEFTDOWN; SendInput(1,&down,sizeof(INPUT));
+            if(await(observer.pressed)) {
+                // Qt 6.5 on Windows waits for another mouse move before entering
+                // DoDragDrop. Keep moving like a person instead of waiting still.
+                for(int i=0;i<10 && !observer.entered.load();++i) { QThread::msleep(40); SetPhysicalCursorPos(source.x()+18+i*2,source.y()+18+i*2); }
+            }
+            if(await(observer.entered)) { observer.moved=false; SetPhysicalCursorPos(target.x(),target.y()); await(observer.moved); }
+            QThread::msleep(250); INPUT up={}; up.type=INPUT_MOUSE; up.mi.dwFlags=MOUSEEVENTF_LEFTUP; SendInput(1,&up,sizeof(INPUT));
+        }));
+        auto join=qScopeGuard([&] { driver->wait(); }); driver->start(); QTest::qWait(800);
+        QTRY_VERIFY_WITH_TIMEOUT(driver->isFinished(),6000); QVERIFY(inputWasOverWindow.load()); QVERIFY(observer.pressed.load()); QVERIFY(observer.entered.load());
+        QTRY_COMPARE(w.currentScript().steps[0].action,Action::IfImage); QCOMPARE(w.currentScript().steps[3].action,Action::Wait);
+        QString error; QVERIFY(w.currentScript().validate(error)); w.close();
+    }
     void similarityIgnoresWheel() {
         StepEditor editor(false); Step step; step.action=Action::IfImage; editor.setValue(step); editor.show();
         auto *field=editor.findChild<QSpinBox *>("imageSimilarity"); QVERIFY(field);

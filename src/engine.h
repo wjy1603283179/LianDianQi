@@ -33,7 +33,7 @@ private:
     bool click(const InputKey &);
     void fail(const QString &);
     bool releaseAll();
-    void finish();
+    void finish(bool force=false);
     void recognize(const Step &);
     void stopWithOutcome(const QString &outcome);
     void logEntry(const QString &action, const QString &detail, int step=-2, bool merge=false);
@@ -50,11 +50,11 @@ private:
     InputKey holdKey;
     int holdStep=-1;
     QMap<QString,InputKey> held;
-    struct Loop { int begin; int remaining; };
+    struct Loop { int begin; int remaining; int conditionDepth; };
     QVector<Loop> loops;
     struct Condition { int end; bool found; QRect bounds; };
     QVector<Condition> conditions;
-    QMap<int,int> ends, alternatives;
+    QMap<int,int> ends, alternatives, loopEnds;
     VisionSource *injectedVision;
     std::unique_ptr<ScreenMatcher> screenMatcher;
     QThread *visionThread=nullptr;
