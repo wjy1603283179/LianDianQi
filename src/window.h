@@ -23,6 +23,9 @@ private:
     void updateFields();
     void capture(bool position);
     void setKey(const InputKey &);
+    void selectImage(bool fromScreen);
+    void selectRegion();
+    void refreshImage();
     QComboBox *action;
     QLineEdit *input;
     TimeField *interval, *duration;
@@ -31,6 +34,13 @@ private:
     QPushButton *captureKey, *capturePosition;
     QWidget *inputRow, *intervalRow, *durationRow, *countRow, *positionRow;
     InputKey currentKey;
+    QByteArray templatePng;
+    QString templateName;
+    QRect searchRegion;
+    QWidget *imageRow,*similarityRow,*regionRow;
+    QLabel *imagePreview,*regionInfo;
+    QSpinBox *similarity;
+    QCheckBox *scaleMatch,*limitRegion;
     bool loading=false;
 };
 
@@ -55,6 +65,7 @@ private:
     void updateState(bool);
     void addStep(Action);
     void refreshItem(QListWidgetItem *, const Step &);
+    void scheduleIndent();
     void saveScript();
     void record();
     void endRecording();
@@ -83,4 +94,5 @@ private:
     quint64 lastRecordTime=0;
     QMap<QString,InputKey> recordingHeld;
     int currentRunningStep=-1;
+    bool indentPending=false;
 };

@@ -20,6 +20,10 @@
 #include <QScrollArea>
 #include <QTabBar>
 #include <QVBoxLayout>
+#include <QBuffer>
+#include <QImageReader>
+#include <QScopeGuard>
+#include <QEventLoop>
 
 static QLabel *label(const QString &s, const char *name=nullptr) {
     auto *w=new QLabel(s); w->setWordWrap(true); if(name) w->setObjectName(name); return w;
@@ -73,7 +77,7 @@ StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
     form->setSizeConstraint(QLayout::SetMinimumSize); form->setLabelAlignment(Qt::AlignLeft|Qt::AlignVCenter);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     action=new ComboBox;
-    for(int i=0;i<(isQuick?5:9);++i) action->addItem(actionName(Action(i)),i);
+    for(int i=0;i<(isQuick?5:ActionCount);++i) action->addItem(actionName(Action(i)),i);
     action->setObjectName(isQuick?"quickAction":"stepAction");
     form->addRow(QStringLiteral("执行动作"),action);
     input=new QLineEdit; input->setObjectName(isQuick?"quickInput":"stepInput"); input->setReadOnly(true); input->setFocusPolicy(Qt::NoFocus); input->setText(currentKey.name());
@@ -93,6 +97,21 @@ StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
     auto *xl=label("X"); auto *yl=label("Y"); xl->setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed); yl->setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed);
     pl->addWidget(xl); pl->addWidget(x,1); pl->addSpacing(4); pl->addWidget(yl); pl->addWidget(y,1); pl->addWidget(capturePosition);
     form->addRow(QStringLiteral("屏幕坐标"),positionRow);
+    imageRow=new QWidget; auto *images=new QVBoxLayout(imageRow); images->setContentsMargins(0,0,0,0); images->setSpacing(8);
+    imagePreview=new QLabel; imagePreview->setObjectName("imagePreview"); imagePreview->setAlignment(Qt::AlignCenter); imagePreview->setMinimumHeight(64);
+    imagePreview->setStyleSheet("background:#f8f9fd;border:1px solid #e5e8f0;border-radius:8px;padding:8px;"); images->addWidget(imagePreview);
+    auto *shot=new QPushButton(QStringLiteral("截图")); shot->setObjectName("templateCapture"); auto *importImage=new QPushButton(QStringLiteral("导入图像")); importImage->setObjectName("templateImport");
+    images->addWidget(row({shot,importImage})); form->addRow(QStringLiteral("图像模板"),imageRow);
+    similarity=spin(60,100,88); similarity->setObjectName("imageSimilarity"); similarity->setMinimumWidth(65); similarityRow=row({similarity,label("%")}); form->addRow(QStringLiteral("相似度"),similarityRow);
+    scaleMatch=new QCheckBox(QStringLiteral("适配缩放")); scaleMatch->setObjectName("imageScaleMatch"); scaleMatch->setChecked(true); form->addRow(QString(),scaleMatch);
+    limitRegion=new QCheckBox(QStringLiteral("限定识别范围")); limitRegion->setObjectName("imageLimitRegion"); form->addRow(QString(),limitRegion);
+    regionInfo=new QLabel; regionInfo->setWordWrap(true); regionInfo->setObjectName("imageRegionInfo"); auto *regionSelect=new QPushButton(QStringLiteral("框选")); regionSelect->setObjectName("imageRegionSelect");
+    regionRow=row({regionInfo,regionSelect}); form->addRow(QStringLiteral("识别范围"),regionRow);
+    connect(shot,&QPushButton::clicked,this,[this] { selectImage(true); }); connect(importImage,&QPushButton::clicked,this,[this] { selectImage(false); });
+    connect(regionSelect,&QPushButton::clicked,this,&StepEditor::selectRegion);
+    connect(similarity,QOverload<int>::of(&QSpinBox::valueChanged),this,[this] { if(!loading) emit changed(); });
+    for(auto *check:{scaleMatch,limitRegion}) connect(check,&QCheckBox::toggled,this,[this] { updateFields(); if(!loading) emit changed(); });
+    refreshImage();
     connect(action,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this] { updateFields(); if(!loading) emit changed(); });
     for(auto *w:{interval,duration}) connect(w,&TimeField::valueChanged,this,[this] { if(!loading) emit changed(); });
     for(auto *w:{count,x,y}) connect(w,QOverload<int>::of(&QSpinBox::valueChanged),this,[this] { if(!loading) emit changed(); });
@@ -103,14 +122,18 @@ StepEditor::StepEditor(bool isQuick,QWidget *parent):QWidget(parent) {
 }
 Step StepEditor::value() const {
     Step s; s.action=Action(action->currentData().toInt()); s.key=currentKey; s.interval=interval->value(); s.duration=duration->value();
-    s.count=count->value(); s.fixedPosition=fixed->isChecked(); s.position=QPoint(x->value(),y->value()); return s;
+    s.count=count->value(); s.fixedPosition=fixed->isChecked(); s.position=QPoint(x->value(),y->value());
+    s.templatePng=templatePng; s.templateName=templateName; s.searchRegion=searchRegion;
+    s.similarity=similarity->value(); s.scaleMatch=scaleMatch->isChecked(); s.limitRegion=limitRegion->isChecked(); return s;
 }
 void StepEditor::setKey(const InputKey &k) {
     currentKey=k; input->setText(k.name());
 }
 void StepEditor::setValue(const Step &s) {
     loading=true; action->setCurrentIndex(int(s.action)); setKey(s.key); interval->setValue(s.interval); duration->setValue(s.duration);
-    count->setValue(s.count); fixed->setChecked(s.fixedPosition); x->setValue(s.position.x()); y->setValue(s.position.y()); loading=false; updateFields();
+    count->setValue(s.count); fixed->setChecked(s.fixedPosition); x->setValue(s.position.x()); y->setValue(s.position.y());
+    templatePng=s.templatePng; templateName=s.templateName; searchRegion=s.searchRegion;
+    similarity->setValue(s.similarity); scaleMatch->setChecked(s.scaleMatch); limitRegion->setChecked(s.limitRegion); refreshImage(); loading=false; updateFields();
 }
 void StepEditor::updateFields() {
     auto a=Action(action->currentData().toInt()); auto *form=qobject_cast<QFormLayout *>(layout());
@@ -120,6 +143,45 @@ void StepEditor::updateFields() {
     duration->setSpecialValueText(a==Action::Wait?QString():QStringLiteral("直到停止"));
     bool mouseInput=isInputAction(a) && currentKey.mouse;
     fixed->setVisible(mouseInput); visible(positionRow,a==Action::Move || (mouseInput && fixed->isChecked()));
+    visible(imageRow,a==Action::IfImage); visible(similarityRow,a==Action::IfImage);
+    scaleMatch->setVisible(a==Action::IfImage); limitRegion->setVisible(a==Action::IfImage); visible(regionRow,a==Action::IfImage && limitRegion->isChecked());
+}
+void StepEditor::refreshImage() {
+    const QImage image=QImage::fromData(templatePng,"PNG");
+    if(image.isNull()) imagePreview->setText(QStringLiteral("选择图像"));
+    else imagePreview->setPixmap(QPixmap::fromImage(image).scaled(200,96,Qt::KeepAspectRatio,Qt::SmoothTransformation));
+    imagePreview->setToolTip(templateName);
+    regionInfo->setText(searchRegion.isEmpty()?QStringLiteral("未选择"):QStringLiteral("(%1, %2)\n%3 × %4 px").arg(searchRegion.x()).arg(searchRegion.y()).arg(searchRegion.width()).arg(searchRegion.height()));
+}
+static void restoreOwner(QWidget *owner) { owner->setProperty("captureInProgress",false); if(owner->property("shutdownRequested").toBool()) return; owner->show(); owner->raise(); owner->activateWindow(); SetForegroundWindow(reinterpret_cast<HWND>(owner->winId())); }
+static void settleDesktop() { QEventLoop loop; QTimer::singleShot(120,&loop,&QEventLoop::quit); loop.exec(); }
+void StepEditor::selectRegion() {
+    auto *owner=window(); owner->setProperty("captureInProgress",true); owner->hide(); auto restore=qScopeGuard([owner] { restoreOwner(owner); }); settleDesktop();
+    if(owner->property("shutdownRequested").toBool()) return;
+    PositionPicker picker(owner,true); if(picker.exec()!=QDialog::Accepted) return;
+    searchRegion=picker.region(); loading=true; limitRegion->setChecked(true); loading=false; refreshImage(); updateFields(); emit changed();
+}
+void StepEditor::selectImage(bool fromScreen) {
+    QImage image; QString name,error;
+    if(fromScreen) {
+        auto *owner=window(); owner->setProperty("captureInProgress",true); owner->hide(); auto restore=qScopeGuard([owner] { restoreOwner(owner); }); settleDesktop();
+        if(owner->property("shutdownRequested").toBool()) return;
+        PositionPicker picker(owner,true); if(picker.exec()!=QDialog::Accepted) return;
+        QRect region=picker.region(); bool singleScreen=false; for(const auto &screen:ScreenCapture::monitors()) if(screen.contains(region)) singleScreen=true;
+        if(region.width()<8 || region.height()<8 || region.width()>1024 || region.height()>1024) error=QStringLiteral("模板尺寸须为 8～1024 像素");
+        else if(!singleScreen) error=QStringLiteral("图像模板需位于同一块屏幕内");
+        else { settleDesktop(); if(owner->property("shutdownRequested").toBool()) return; ScreenCapture capture; image=capture.grab(region,error).copy(); name=QStringLiteral("截图 %1 × %2").arg(region.width()).arg(region.height()); }
+    } else {
+        const auto path=QFileDialog::getOpenFileName(this,QStringLiteral("导入图像模板"),QString(),QStringLiteral("图像 (*.png *.bmp)")); if(path.isEmpty()) return;
+        QImageReader reader(path); const QSize size=reader.size();
+        if(size.width()<8 || size.height()<8 || size.width()>1024 || size.height()>1024) error=QStringLiteral("模板尺寸须为 8～1024 像素");
+        else { image=reader.read(); if(image.isNull()) error=reader.errorString(); name=QFileInfo(path).fileName(); }
+    }
+    TemplateMatcher check; if(error.isEmpty()) check.prepare(image,false,error);
+    if(!error.isEmpty()) { QMessageBox::warning(this,QStringLiteral("图像模板"),error); return; }
+    QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly); image.save(&buffer,"PNG");
+    if(bytes.size()>2*1024*1024) { QMessageBox::warning(this,QStringLiteral("图像模板"),QStringLiteral("模板不能超过 2 MB")); return; }
+    templatePng=bytes; templateName=name; refreshImage(); emit changed();
 }
 void StepEditor::capture(bool position) {
     QWidget *owner=window();
@@ -139,7 +201,7 @@ public:
     QSize sizeHint(const QStyleOptionViewItem &,const QModelIndex &) const override { return {240,86}; }
     void paint(QPainter *p,const QStyleOptionViewItem &o,const QModelIndex &i) const override {
         p->save(); p->setRenderHint(QPainter::Antialiasing);
-        QRect r=o.rect.adjusted(4,2,-4,-10); bool selected=o.state.testFlag(QStyle::State_Selected);
+        QRect r=o.rect.adjusted(4+std::min(6,i.data(Qt::UserRole+2).toInt())*10,2,-4,-10); bool selected=o.state.testFlag(QStyle::State_Selected);
         bool running=i.data(Qt::UserRole+1).toBool();
         p->setPen(QPen(running?QColor("#32a683"):selected?QColor("#6371dc"):QColor("#e4e7ef"),selected?1.5:1));
         p->setBrush(running?QColor("#effaf5"):selected?QColor("#f1f3ff"):Qt::white); p->drawRoundedRect(r,10,10);
@@ -229,7 +291,10 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     auto *flowBody=new QHBoxLayout; auto *listCard=card(); auto *ll=new QVBoxLayout(listCard); ll->setContentsMargins(14,16,14,12);
     flow=new QListWidget; flow->setObjectName("flow"); flow->setItemDelegate(new StepDelegate(flow)); flow->setDragDropMode(QAbstractItemView::InternalMove);
     flow->setDefaultDropAction(Qt::MoveAction); flow->setSelectionMode(QAbstractItemView::SingleSelection); ll->addWidget(flow,1);
-    auto *addCombo=new ComboBox; for(int i=0;i<9;++i) addCombo->addItem(actionName(Action(i)),i);
+    for(auto signal:{&QAbstractItemModel::rowsInserted,&QAbstractItemModel::rowsRemoved}) connect(flow->model(),signal,this,[this] { scheduleIndent(); });
+    connect(flow->model(),&QAbstractItemModel::rowsMoved,this,[this] { scheduleIndent(); });
+    connect(flow->model(),&QAbstractItemModel::dataChanged,this,[this](const QModelIndex &,const QModelIndex &,const QList<int> &roles) { if(roles.isEmpty() || roles.contains(Qt::UserRole)) scheduleIndent(); });
+    auto *addCombo=new ComboBox; addCombo->setObjectName("addAction"); for(int i=0;i<ActionCount;++i) addCombo->addItem(actionName(Action(i)),i);
     auto *add=new QPushButton(QStringLiteral("＋ 添加")); auto *remove=new QPushButton(QStringLiteral("删除")); auto *duplicate=new QPushButton(QStringLiteral("复制"));
     ll->addWidget(row({addCombo,add,duplicate,remove})); flowBody->addWidget(listCard,3);
     auto *editContent=new QWidget; auto *editBody=new QVBoxLayout(editContent); editBody->setContentsMargins(0,0,10,0);
@@ -272,6 +337,9 @@ Window::Window(QWidget *parent,bool testing):QMainWindow(parent),engine(sink,thi
     connect(stopButton,&QPushButton::clicked,this,[this] { endRecording(); engine.stop(); notice(QStringLiteral("已停止")); });
     connect(&engine,&Engine::stateChanged,this,&Window::updateState);
     connect(&engine,&Engine::failed,this,[this](const QString &s) { notice(s,true); });
+    connect(&engine,&Engine::matchEvaluated,this,[this](int step,const MatchResult &r) {
+        notice(QStringLiteral("步骤 %1 · %2 · 截图 %3 ms · 识别 %4 ms").arg(step+1).arg(r.found?QStringLiteral("找到图像"):QStringLiteral("未找到图像")).arg(r.captureMicros/1000.0,0,'f',2).arg(r.matchMicros/1000.0,0,'f',2));
+    });
     connect(&engine,&Engine::finished,this,[this] { notice(QStringLiteral("任务完成")); stats->setText(QStringLiteral("完成 · %1 次动作").arg(engine.eventCount())); });
     connect(&engine,&Engine::progress,this,[this](int step,int round,quint64 count) {
         stats->setText(step<0?QStringLiteral("启动延迟中…"):QStringLiteral("第 %1 轮 · 步骤 %2 · %3 次动作").arg(round+1).arg(step+1).arg(count));
@@ -314,9 +382,41 @@ void Window::shortcutHint() {
     notice(parts.join(QStringLiteral(" · ")));
 }
 void Window::refreshItem(QListWidgetItem *item,const Step &s) { item->setText(s.title()); item->setToolTip(s.detail()); item->setData(Qt::UserRole,s.json()); }
+void Window::scheduleIndent() {
+    if(indentPending) return; indentPending=true;
+    QTimer::singleShot(0,this,[this] {
+        indentPending=false; int depth=0;
+        for(int i=0;i<flow->count();++i) {
+            auto *item=flow->item(i); const auto a=item->data(Qt::UserRole).toJsonObject().value("action").toString();
+            if(a=="endIf" || a=="endLoop" || a=="else") depth=std::max(0,depth-1);
+            item->setData(Qt::UserRole+2,depth);
+            if(a=="ifImage" || a=="loop" || a=="else") ++depth;
+        }
+    });
+}
 void Window::addStep(Action a) {
-    if(flow->count()>=10000) { notice(QStringLiteral("步骤最多 10000 个"),true); return; }
-    Step s; s.action=a; auto *item=new QListWidgetItem; refreshItem(item,s); int at=flow->currentRow()+1; flow->insertItem(at,item); flow->setCurrentItem(item);
+    if(flow->count()+(a==Action::IfImage?3:1)>10000) { notice(QStringLiteral("步骤最多 10000 个"),true); return; }
+    int at=flow->currentRow()+1;
+    if(a==Action::Else) {
+        QList<int> conditions;
+        for(int i=0;i<=flow->currentRow();++i) {
+            const auto id=flow->item(i)->data(Qt::UserRole).toJsonObject().value("action").toString();
+            if(id=="ifImage") conditions.append(i);
+            else if(id=="endIf" && i<flow->currentRow() && !conditions.isEmpty()) conditions.removeLast();
+        }
+        if(conditions.isEmpty()) { notice(QStringLiteral("请选择一个图像条件或分支内的步骤"),true); return; }
+        int depth=0; at=-1;
+        for(int i=conditions.last()+1;i<flow->count();++i) {
+            const auto id=flow->item(i)->data(Qt::UserRole).toJsonObject().value("action").toString();
+            if(id=="ifImage") ++depth;
+            else if(id=="else" && depth==0) { notice(QStringLiteral("这个条件已有否则分支"),true); return; }
+            else if(id=="endIf") { if(depth==0) { at=i; break; } --depth; }
+        }
+        if(at<0) { notice(QStringLiteral("请先补齐条件的结束步骤"),true); return; }
+    }
+    Step s; s.action=a; auto *item=new QListWidgetItem; refreshItem(item,s); flow->insertItem(at,item);
+    if(a==Action::IfImage) { for(auto child:{Action::ClickMatch,Action::EndIf}) { Step step; step.action=child; auto *next=new QListWidgetItem; refreshItem(next,step); flow->insertItem(++at,next); } }
+    flow->setCurrentItem(item);
 }
 Script Window::currentScript() const {
     Script s; s.startDelay=delay->value(); s.rounds=rounds->value();
@@ -342,6 +442,7 @@ void Window::saveScript() {
     scriptPath=path; notice(QStringLiteral("脚本已保存"));
 }
 void Window::start() {
+    if(closing || property("captureInProgress").toBool()) return;
     if(recording || engine.running()) return;
     if(QApplication::activeModalWidget()) { notice(QStringLiteral("请先完成当前弹窗操作"),true); return; }
     Script s;
@@ -364,6 +465,7 @@ void Window::updateState(bool running) {
     if(!running) currentRunningStep=-1;
 }
 void Window::record() {
+    if(closing || property("captureInProgress").toBool()) return;
     if(recording) { endRecording(); return; }
     if(QApplication::activeModalWidget()) { notice(QStringLiteral("请先完成当前弹窗操作"),true); return; }
     if(engine.running()) { notice(QStringLiteral("请先停止任务再录制"),true); return; }
@@ -430,8 +532,8 @@ void Window::settingsSave() {
     }
     st.sync();
 }
-void Window::shutdown() { if(closing) return; closing=true; endRecording(); engine.stop(); monitor.stop(); settingsSave(); hotkeys.clear(); }
+void Window::shutdown() { if(closing) return; closing=true; setProperty("shutdownRequested",true); endRecording(); engine.stop(); monitor.stop(); settingsSave(); hotkeys.clear(); }
 void Window::closeEvent(QCloseEvent *event) { shutdown(); event->accept(); }
-void Window::showWindow() { showNormal(); raise(); activateWindow(); }
+void Window::showWindow() { if(closing || property("captureInProgress").toBool()) return; showNormal(); raise(); activateWindow(); }
 void Window::toggleTask() { if(recording) endRecording(); else if(engine.running()) engine.stop(); else start(); }
 void Window::stopTask() { endRecording(); engine.stop(); }

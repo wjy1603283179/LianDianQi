@@ -1,0 +1,45 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>点序图像匹配验收</title>
+<style>body{font:16px "Microsoft YaHei",sans-serif;background:#f5f6fa;color:#25304a;margin:24px}h1{font-size:24px}button,select{padding:8px;border:1px solid #dce1ec;border-radius:8px;background:white}svg{display:block;margin:20px 0;background:#f7f8fd;max-width:none}a:hover rect{stroke:#6371dc;stroke-width:2}#log{max-width:1000px;line-height:1.8}#count{color:#5968dc}</style>
+<h1>图像匹配验收</h1><label>显示比例 <select id="scale"><option>.5</option><option>.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select></label> <button id="reset">清空记录</button> <span id="count">0 / 36</span>
+<svg id="canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 848 412" width="848" height="412"><image href="words.png" width="848" height="412"/><a href="#word-1" data-id="1" data-word="大哭"><rect x="61" y="33" width="92" height="47" fill="transparent"/><title>大哭</title></a>
+<a href="#word-2" data-id="2" data-word="张嘴"><rect x="180" y="32" width="94" height="47" fill="transparent"/><title>张嘴</title></a>
+<a href="#word-3" data-id="3" data-word="三条"><rect x="290" y="31" width="93" height="49" fill="transparent"/><title>三条</title></a>
+<a href="#word-4" data-id="4" data-word="泪痕"><rect x="472" y="33" width="92" height="48" fill="transparent"/><title>泪痕</title></a>
+<a href="#word-5" data-id="5" data-word="游戏"><rect x="580" y="29" width="95" height="47" fill="transparent"/><title>游戏</title></a>
+<a href="#word-6" data-id="6" data-word="放在"><rect x="695" y="50" width="94" height="48" fill="transparent"/><title>放在</title></a>
+<a href="#word-7" data-id="7" data-word="风格"><rect x="57" y="113" width="95" height="48" fill="transparent"/><title>风格</title></a>
+<a href="#word-8" data-id="8" data-word="蓝绿色"><rect x="210" y="108" width="141" height="48" fill="transparent"/><title>蓝绿色</title></a>
+<a href="#word-9" data-id="9" data-word="闭眼"><rect x="368" y="104" width="91" height="47" fill="transparent"/><title>闭眼</title></a>
+<a href="#word-10" data-id="10" data-word="抽烟"><rect x="486" y="89" width="93" height="47" fill="transparent"/><title>抽烟</title></a>
+<a href="#word-11" data-id="11" data-word="根本"><rect x="590" y="82" width="95" height="49" fill="transparent"/><title>根本</title></a>
+<a href="#word-12" data-id="12" data-word="动漫"><rect x="695" y="117" width="126" height="63" fill="transparent"/><title>动漫</title></a>
+<a href="#word-13" data-id="13" data-word="五名"><rect x="82" y="166" width="92" height="47" fill="transparent"/><title>五名</title></a>
+<a href="#word-14" data-id="14" data-word="还子"><rect x="190" y="164" width="77" height="39" fill="transparent"/><title>还子</title></a>
+<a href="#word-15" data-id="15" data-word="媒体"><rect x="278" y="160" width="96" height="49" fill="transparent"/><title>媒体</title></a>
+<a href="#word-16" data-id="16" data-word="马尾"><rect x="387" y="157" width="92" height="45" fill="transparent"/><title>马尾</title></a>
+<a href="#word-17" data-id="17" data-word="胸前"><rect x="542" y="139" width="93" height="49" fill="transparent"/><title>胸前</title></a>
+<a href="#word-18" data-id="18" data-word="戴猫"><rect x="112" y="216" width="94" height="48" fill="transparent"/><title>戴猫</title></a>
+<a href="#word-19" data-id="19" data-word="卡通"><rect x="262" y="216" width="94" height="47" fill="transparent"/><title>卡通</title></a>
+<a href="#word-20" data-id="20" data-word="没有"><rect x="401" y="208" width="77" height="40" fill="transparent"/><title>没有</title></a>
+<a href="#word-21" data-id="21" data-word="威胁"><rect x="496" y="193" width="95" height="49" fill="transparent"/><title>威胁</title></a>
+<a href="#word-22" data-id="22" data-word="脸颊"><rect x="665" y="198" width="95" height="48" fill="transparent"/><title>脸颊</title></a>
+<a href="#word-23" data-id="23" data-word="这种"><rect x="26" y="258" width="77" height="40" fill="transparent"/><title>这种</title></a>
+<a href="#word-24" data-id="24" data-word="女孩"><rect x="384" y="252" width="94" height="48" fill="transparent"/><title>女孩</title></a>
+<a href="#word-25" data-id="25" data-word="耳机"><rect x="493" y="257" width="95" height="47" fill="transparent"/><title>耳机</title></a>
+<a href="#word-26" data-id="26" data-word="握拳"><rect x="611" y="253" width="93" height="48" fill="transparent"/><title>握拳</title></a>
+<a href="#word-27" data-id="27" data-word="后头"><rect x="742" y="252" width="78" height="41" fill="transparent"/><title>后头</title></a>
+<a href="#word-28" data-id="28" data-word="主体"><rect x="96" y="304" width="106" height="54" fill="transparent"/><title>主体</title></a>
+<a href="#word-29" data-id="29" data-word="理论"><rect x="246" y="285" width="95" height="47" fill="transparent"/><title>理论</title></a>
+<a href="#word-30" data-id="30" data-word="Q版"><rect x="547" y="313" width="89" height="48" fill="transparent"/><title>Q版</title></a>
+<a href="#word-31" data-id="31" data-word="评论"><rect x="716" y="300" width="107" height="55" fill="transparent"/><title>评论</title></a>
+<a href="#word-32" data-id="32" data-word="双手"><rect x="211" y="339" width="95" height="47" fill="transparent"/><title>双手</title></a>
+<a href="#word-33" data-id="33" data-word="社交"><rect x="319" y="338" width="106" height="54" fill="transparent"/><title>社交</title></a>
+<a href="#word-34" data-id="34" data-word="意识"><rect x="435" y="344" width="94" height="48" fill="transparent"/><title>意识</title></a>
+<a href="#word-35" data-id="35" data-word="排列"><rect x="654" y="358" width="77" height="40" fill="transparent"/><title>排列</title></a>
+<a href="#word-36" data-id="36" data-word="正文"><rect x="740" y="352" width="78" height="46" fill="transparent"/><title>正文</title></a></svg>
+<div id="log"></div><script>
+const canvas=document.querySelector('#canvas'), log=document.querySelector('#log'), seen=new Set();
+canvas.addEventListener('click',e=>{const a=e.target.closest('a');if(!a)return;e.preventDefault();seen.add(a.dataset.id);log.textContent+=(log.textContent?' · ':'')+a.dataset.word;document.querySelector('#count').textContent=seen.size+' / 36';});
+document.querySelector('#scale').onchange=e=>{canvas.setAttribute('width',848*Number(e.target.value));canvas.setAttribute('height',412*Number(e.target.value));};
+document.querySelector('#reset').onclick=()=>{seen.clear();log.textContent='';document.querySelector('#count').textContent='0 / 36';};
+</script></html>

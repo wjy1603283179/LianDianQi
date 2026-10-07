@@ -1,0 +1,326 @@
+[
+  {
+    "id": 1,
+    "word": "大哭",
+    "x": 61,
+    "y": 33,
+    "width": 92,
+    "height": 47,
+    "file": "templates/01.png"
+  },
+  {
+    "id": 2,
+    "word": "张嘴",
+    "x": 180,
+    "y": 32,
+    "width": 94,
+    "height": 47,
+    "file": "templates/02.png"
+  },
+  {
+    "id": 3,
+    "word": "三条",
+    "x": 290,
+    "y": 31,
+    "width": 93,
+    "height": 49,
+    "file": "templates/03.png"
+  },
+  {
+    "id": 4,
+    "word": "泪痕",
+    "x": 472,
+    "y": 33,
+    "width": 92,
+    "height": 48,
+    "file": "templates/04.png"
+  },
+  {
+    "id": 5,
+    "word": "游戏",
+    "x": 580,
+    "y": 29,
+    "width": 95,
+    "height": 47,
+    "file": "templates/05.png"
+  },
+  {
+    "id": 6,
+    "word": "放在",
+    "x": 695,
+    "y": 50,
+    "width": 94,
+    "height": 48,
+    "file": "templates/06.png"
+  },
+  {
+    "id": 7,
+    "word": "风格",
+    "x": 57,
+    "y": 113,
+    "width": 95,
+    "height": 48,
+    "file": "templates/07.png"
+  },
+  {
+    "id": 8,
+    "word": "蓝绿色",
+    "x": 210,
+    "y": 108,
+    "width": 141,
+    "height": 48,
+    "file": "templates/08.png"
+  },
+  {
+    "id": 9,
+    "word": "闭眼",
+    "x": 368,
+    "y": 104,
+    "width": 91,
+    "height": 47,
+    "file": "templates/09.png"
+  },
+  {
+    "id": 10,
+    "word": "抽烟",
+    "x": 486,
+    "y": 89,
+    "width": 93,
+    "height": 47,
+    "file": "templates/10.png"
+  },
+  {
+    "id": 11,
+    "word": "根本",
+    "x": 590,
+    "y": 82,
+    "width": 95,
+    "height": 49,
+    "file": "templates/11.png"
+  },
+  {
+    "id": 12,
+    "word": "动漫",
+    "x": 695,
+    "y": 117,
+    "width": 126,
+    "height": 63,
+    "file": "templates/12.png"
+  },
+  {
+    "id": 13,
+    "word": "五名",
+    "x": 82,
+    "y": 166,
+    "width": 92,
+    "height": 47,
+    "file": "templates/13.png"
+  },
+  {
+    "id": 14,
+    "word": "还子",
+    "x": 190,
+    "y": 164,
+    "width": 77,
+    "height": 39,
+    "file": "templates/14.png"
+  },
+  {
+    "id": 15,
+    "word": "媒体",
+    "x": 278,
+    "y": 160,
+    "width": 96,
+    "height": 49,
+    "file": "templates/15.png"
+  },
+  {
+    "id": 16,
+    "word": "马尾",
+    "x": 387,
+    "y": 157,
+    "width": 92,
+    "height": 45,
+    "file": "templates/16.png"
+  },
+  {
+    "id": 17,
+    "word": "胸前",
+    "x": 542,
+    "y": 139,
+    "width": 93,
+    "height": 49,
+    "file": "templates/17.png"
+  },
+  {
+    "id": 18,
+    "word": "戴猫",
+    "x": 112,
+    "y": 216,
+    "width": 94,
+    "height": 48,
+    "file": "templates/18.png"
+  },
+  {
+    "id": 19,
+    "word": "卡通",
+    "x": 262,
+    "y": 216,
+    "width": 94,
+    "height": 47,
+    "file": "templates/19.png"
+  },
+  {
+    "id": 20,
+    "word": "没有",
+    "x": 401,
+    "y": 208,
+    "width": 77,
+    "height": 40,
+    "file": "templates/20.png"
+  },
+  {
+    "id": 21,
+    "word": "威胁",
+    "x": 496,
+    "y": 193,
+    "width": 95,
+    "height": 49,
+    "file": "templates/21.png"
+  },
+  {
+    "id": 22,
+    "word": "脸颊",
+    "x": 665,
+    "y": 198,
+    "width": 95,
+    "height": 48,
+    "file": "templates/22.png"
+  },
+  {
+    "id": 23,
+    "word": "这种",
+    "x": 26,
+    "y": 258,
+    "width": 77,
+    "height": 40,
+    "file": "templates/23.png"
+  },
+  {
+    "id": 24,
+    "word": "女孩",
+    "x": 384,
+    "y": 252,
+    "width": 94,
+    "height": 48,
+    "file": "templates/24.png"
+  },
+  {
+    "id": 25,
+    "word": "耳机",
+    "x": 493,
+    "y": 257,
+    "width": 95,
+    "height": 47,
+    "file": "templates/25.png"
+  },
+  {
+    "id": 26,
+    "word": "握拳",
+    "x": 611,
+    "y": 253,
+    "width": 93,
+    "height": 48,
+    "file": "templates/26.png"
+  },
+  {
+    "id": 27,
+    "word": "后头",
+    "x": 742,
+    "y": 252,
+    "width": 78,
+    "height": 41,
+    "file": "templates/27.png"
+  },
+  {
+    "id": 28,
+    "word": "主体",
+    "x": 96,
+    "y": 304,
+    "width": 106,
+    "height": 54,
+    "file": "templates/28.png"
+  },
+  {
+    "id": 29,
+    "word": "理论",
+    "x": 246,
+    "y": 285,
+    "width": 95,
+    "height": 47,
+    "file": "templates/29.png"
+  },
+  {
+    "id": 30,
+    "word": "Q版",
+    "x": 547,
+    "y": 313,
+    "width": 89,
+    "height": 48,
+    "file": "templates/30.png"
+  },
+  {
+    "id": 31,
+    "word": "评论",
+    "x": 716,
+    "y": 300,
+    "width": 107,
+    "height": 55,
+    "file": "templates/31.png"
+  },
+  {
+    "id": 32,
+    "word": "双手",
+    "x": 211,
+    "y": 339,
+    "width": 95,
+    "height": 47,
+    "file": "templates/32.png"
+  },
+  {
+    "id": 33,
+    "word": "社交",
+    "x": 319,
+    "y": 338,
+    "width": 106,
+    "height": 54,
+    "file": "templates/33.png"
+  },
+  {
+    "id": 34,
+    "word": "意识",
+    "x": 435,
+    "y": 344,
+    "width": 94,
+    "height": 48,
+    "file": "templates/34.png"
+  },
+  {
+    "id": 35,
+    "word": "排列",
+    "x": 654,
+    "y": 358,
+    "width": 77,
+    "height": 40,
+    "file": "templates/35.png"
+  },
+  {
+    "id": 36,
+    "word": "正文",
+    "x": 740,
+    "y": 352,
+    "width": 78,
+    "height": 46,
+    "file": "templates/36.png"
+  }
+]

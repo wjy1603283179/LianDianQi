@@ -108,7 +108,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="build/clicker_tests.exe")
     parser.add_argument("--qt-bin", default=".tools/Qt/6.5.3/msvc2019_64/bin")
-    parser.add_argument("--output", default="artifacts/display-smoke-1.0.4")
+    parser.add_argument("--output", default="artifacts/display-smoke-1.1.0")
+    parser.add_argument("--vision-exe", default="build/vision_tests.exe")
     parser.add_argument("--change-layout", action="store_true")
     args = parser.parse_args()
     output = Path(args.output).resolve()
@@ -144,6 +145,16 @@ def main():
         if proc.returncode:
             print(result_file.read_text(encoding="utf-8"), flush=True)
             raise AssertionError(f"Native display regression failed: {name}")
+        vision = Path(args.vision_exe).resolve()
+        if vision.is_file():
+            vision_file = output / f"{name}-vision.txt"
+            result = subprocess.run([str(vision), "nativeRectangleSelectionAcrossMonitors", "nativePhysicalMatchOnEachMonitor",
+                                     "-o", str(vision_file) + ",txt"], env=env, timeout=30)
+            check["visionResult"] = str(vision_file)
+            check["visionExitCode"] = result.returncode
+            if result.returncode:
+                print(vision_file.read_text(encoding="utf-8"), flush=True)
+                raise AssertionError(f"Native vision display regression failed: {name}")
 
     changed = False
     try:

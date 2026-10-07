@@ -1,13 +1,15 @@
 #pragma once
 #include "input.h"
+#include "vision.h"
 #include <QElapsedTimer>
 #include <QMap>
 #include <QTimer>
+#include <QThread>
 
 class Engine : public QObject {
     Q_OBJECT
 public:
-    explicit Engine(InputSink &sink, QObject *parent = nullptr);
+    explicit Engine(InputSink &sink, QObject *parent = nullptr, VisionSource *vision = nullptr);
     ~Engine() override;
     bool start(const Script &, QString &error);
     void stop();
@@ -20,6 +22,7 @@ signals:
     void progress(int step, int round, quint64 actions);
     void finished();
     void failed(QString);
+    void matchEvaluated(int step, MatchResult result);
 private:
     void tick();
     bool key(const InputKey &, bool);
@@ -27,6 +30,7 @@ private:
     void fail(const QString &);
     bool releaseAll();
     void finish();
+    void recognize(const Step &);
     InputSink &sink;
     QTimer timer;
     QElapsedTimer reporting;
@@ -39,4 +43,11 @@ private:
     QMap<QString,InputKey> held;
     struct Loop { int begin; int remaining; };
     QVector<Loop> loops;
+    struct Condition { int end; bool found; QRect bounds; };
+    QVector<Condition> conditions;
+    QMap<int,int> ends, alternatives;
+    VisionSource *injectedVision;
+    std::unique_ptr<ScreenMatcher> screenMatcher;
+    QThread *visionThread=nullptr;
+    std::shared_ptr<std::atomic_bool> cancel;
 };

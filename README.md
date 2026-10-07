@@ -9,12 +9,15 @@
 - 鼠标左/右/中/侧键，键盘任意单键；支持采集真实输入，区分左右修饰键和小键盘。
 - 连点、长按、按下、抬起、按一次；支持固定坐标、多屏及负坐标。
 - 拖动步骤卡片编排流程，支持等待、移动鼠标、嵌套循环、整条脚本循环和 JSON 导入保存。
+- 图像条件 if / else、框选识别范围、点击匹配矩形中心；截图模板支持等比例缩放，文字截图同样可用，无 OCR 或 OpenCV 运行依赖。
 - 录制键盘/鼠标按下抬起事件、点击位置和间隔；不录制移动轨迹和滚轮。
 - 全局快捷键：**F6 启停 / F8 停止 / F7 录制**，可修改并检测占用冲突。
 - FloatingBall 配置式接入：启动、正常停止、显示窗口及进程状态。
 - 单实例、事件驱动；空闲无执行轮询，不驻留托盘，无后台子进程、服务和开机项。
 
 ![编排脚本](docs/screenshots/flow.png)
+
+![图像条件](docs/screenshots/image-match.png)
 
 ## 下载与使用
 
@@ -52,12 +55,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 
 也可给 build.ps1 传入 `-QtRoot`，使用已有 Qt 开发套件。构建会执行 QtTest。
 测试报告写入 `build/test-results.txt`；集成测试见 `tests/native_smoke.py`。
+图像测试写入 `build/vision-results.txt`；`tests/test_vision.cpp` 覆盖分支、取消、多屏物理坐标和真实超链接点击。
+验收页面、36 个模板和可直接导入的脚本在 [examples/image-matching](examples/image-matching)。
 双屏检查见 `tests/display_smoke.py`，覆盖屏幕四角、边缘、负坐标及不同缩放。
 
 ```powershell
 python scripts\prepare-licenses.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\package.ps1
-python tests\native_smoke.py --exe dist\DianXu-1.0.4-windows-x64\LianDianQi.exe
+python tests\native_smoke.py --exe dist\DianXu-1.1.0-windows-x64\LianDianQi.exe
 ```
 
 关闭已运行的点序实例后，可运行以下真实双屏检查。`--change-layout` 会临时把副屏设为
@@ -75,6 +80,7 @@ python tests\display_smoke.py --change-layout
 
 执行器使用单次 `QTimer` 调度，停止会取消待执行步骤并释放程序持有的按键。
 输入使用 Windows `SendInput`，采集使用按需安装的低级钩子，快捷键使用 `RegisterHotKey`。
+图像识别使用 GDI 范围截图、SSE2 像素筛选和加权特征验证；常见缩放优先，连续识别同一模板时复用特征和上次命中的比例。识别工作线程可取消，任务停止后释放缓存。
 单实例由当前用户的命名互斥体保护，控制使用仅当前用户可访问的本地命名管道，没有 HTTP 服务。
 
 项目代码使用 [MIT](LICENSE)。Qt 使用 LGPL-3.0，保持动态链接，发布包包含许可、第三方声明和准确版本的源码下载地址。

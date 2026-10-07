@@ -1,6 +1,7 @@
 #pragma once
 #include <QJsonObject>
 #include <QPoint>
+#include <QRect>
 #include <QString>
 #include <QVector>
 
@@ -19,7 +20,8 @@ struct InputKey {
 };
 Q_DECLARE_METATYPE(InputKey)
 
-enum class Action { Repeat, Hold, Down, Up, Click, Wait, Move, LoopBegin, LoopEnd };
+enum class Action { Repeat, Hold, Down, Up, Click, Wait, Move, LoopBegin, LoopEnd, IfImage, Else, EndIf, ClickMatch };
+constexpr int ActionCount=13;
 struct Step {
     Action action = Action::Click;
     InputKey key;
@@ -28,6 +30,11 @@ struct Step {
     int count = 10;
     bool fixedPosition = false;
     QPoint position;
+    QByteArray templatePng;
+    QString templateName;
+    QRect searchRegion;
+    bool limitRegion=false,scaleMatch=true;
+    int similarity=88;
     QString title() const;
     QString detail() const;
     QJsonObject json() const;

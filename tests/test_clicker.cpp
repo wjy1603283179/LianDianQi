@@ -16,6 +16,8 @@
 #include <QScreen>
 #include <QMouseEvent>
 #include <QWindow>
+#include <QBuffer>
+#include <QPainter>
 
 class FakeInput : public InputSink {
 public:
@@ -60,6 +62,68 @@ class Tests : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() { QApplication::setStyle(QStyleFactory::create("Fusion")); }
+    void imageEditorAndBranchLayout() {
+        Window w(nullptr,true); w.show(); auto *tabs=w.findChild<QTabWidget *>("tabs");
+        Step p; p.action=Action::IfImage; QImage image(64,40,QImage::Format_RGB32); image.fill(Qt::white); { QPainter painter(&image); painter.fillRect(10,8,30,20,Qt::blue); }
+        QBuffer buffer(&p.templatePng); buffer.open(QIODevice::WriteOnly); image.save(&buffer,"PNG"); buffer.close();
+        p.templateName=QStringLiteral("测试模板"); p.limitRegion=true; p.searchRegion=QRect(-200,-80,500,300); p.similarity=93;
+        Script script; Step click; click.action=Action::ClickMatch; Step alternative; alternative.action=Action::Else; Step end; end.action=Action::EndIf;
+        script.steps={p,click,alternative,Step{},end}; w.setScript(script); QCoreApplication::processEvents(); QCOMPARE(w.currentScript().json(),script.json());
+        auto *list=w.findChild<QListWidget *>("flow"); QCOMPARE(list->item(1)->data(Qt::UserRole+2).toInt(),1); QCOMPARE(list->item(2)->data(Qt::UserRole+2).toInt(),0);
+        QCOMPARE(list->item(3)->data(Qt::UserRole+2).toInt(),1); QCOMPARE(list->item(4)->data(Qt::UserRole+2).toInt(),0);
+        auto *similarity=w.findChild<QSpinBox *>("imageSimilarity"); // Quick editor has hidden vision controls too.
+        auto editors=w.findChildren<StepEditor *>(); StepEditor *flowEditor=nullptr; for(auto *e:editors) if(e->findChild<QComboBox *>("stepAction")) flowEditor=e;
+        QVERIFY(flowEditor); similarity=flowEditor->findChild<QSpinBox *>("imageSimilarity"); QCOMPARE(similarity->value(),93); similarity->setValue(96); QCOMPARE(w.currentScript().steps[0].similarity,96);
+        QCOMPARE(w.currentScript().steps[0].templatePng,p.templatePng); QCOMPARE(w.currentScript().steps[0].searchRegion,p.searchRegion);
+        for(QSize size:{QSize(800,480),QSize(980,680),QSize(2560,1440)}) {
+            w.resize(size); QCoreApplication::processEvents(); QPoint navigation=tabs->tabBar()->mapTo(&w,QPoint());
+            tabs->setCurrentIndex(0); QCoreApplication::processEvents(); QCOMPARE(tabs->tabBar()->mapTo(&w,QPoint()),navigation);
+            tabs->setCurrentIndex(1); QCoreApplication::processEvents(); QCOMPARE(tabs->tabBar()->mapTo(&w,QPoint()),navigation);
+            auto *scroll=w.findChild<QScrollArea *>("stepScroll"); scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); QCoreApplication::processEvents();
+            auto *choose=flowEditor->findChild<QPushButton *>("imageRegionSelect"); QVERIFY(choose->isVisible()); QVERIFY(choose->width()>=50); QVERIFY(choose->height()>=25);
+        }
+        script.steps={p,click,end}; w.setScript(script); auto *addCombo=w.findChild<QComboBox *>("addAction"); addCombo->setCurrentIndex(int(Action::Else));
+        QPushButton *add=nullptr; for(auto *b:w.findChildren<QPushButton *>()) if(b->text()==QStringLiteral("＋ 添加")) add=b;
+        QVERIFY(add); add->click(); QCOMPARE(w.currentScript().steps[2].action,Action::Else); QCOMPARE(w.currentScript().steps[3].action,Action::EndIf); QString error; QVERIFY2(w.currentScript().validate(error),qPrintable(error));
+        add->click(); QCOMPARE(list->count(),4); // Duplicate else is rejected without damaging the flow.
+        w.close();
+    }
+    void imageSelectionCancelRestoresOwnerAndBlocksControls() {
+        if(QGuiApplication::platformName()=="offscreen") QSKIP("Requires the native Windows UI backend.");
+        Window w(nullptr,true); Step p; p.action=Action::IfImage; p.limitRegion=true; p.searchRegion=QRect(-10,20,200,120);
+        Script s; s.steps={p}; w.setScript(s); w.showMaximized(); QTest::qWait(80);
+        StepEditor *editor=nullptr; for(auto *e:w.findChildren<StepEditor *>()) if(e->findChild<QComboBox *>("stepAction")) editor=e;
+        QVERIFY(editor); auto *button=editor->findChild<QPushButton *>("imageRegionSelect"); QVERIFY(button);
+        QTimer::singleShot(50,&w,[&] { QVERIFY(w.property("captureInProgress").toBool()); w.toggleTask(); QVERIFY(!w.execution().running()); });
+        QTimer::singleShot(200,&w,[&] { auto *picker=qobject_cast<PositionPicker *>(QApplication::activeModalWidget()); QVERIFY(picker); QTest::keyClick(picker,Qt::Key_Escape); });
+        button->click(); QVERIFY(w.isVisible()); QVERIFY(w.isMaximized()); QVERIFY(!w.property("captureInProgress").toBool()); QCOMPARE(w.currentScript().steps[0].searchRegion,p.searchRegion);
+        QTRY_COMPARE(GetForegroundWindow(),reinterpret_cast<HWND>(w.winId())); w.close();
+    }
+    void imageSelectionShutdownDuringPreparation() {
+        Window w(nullptr,true); Step p; p.action=Action::IfImage; p.limitRegion=true; Script s; s.steps={p}; w.setScript(s); w.show();
+        StepEditor *editor=nullptr; for(auto *e:w.findChildren<StepEditor *>()) if(e->findChild<QComboBox *>("stepAction")) editor=e;
+        QVERIFY(editor); QTimer::singleShot(40,&w,&Window::shutdown); editor->findChild<QPushButton *>("imageRegionSelect")->click();
+        QVERIFY(!w.isVisible()); QVERIFY(!w.execution().running()); QVERIFY(!w.property("captureInProgress").toBool()); w.close();
+    }
+    void nativeTemplateCaptureExcludesOverlay() {
+        if(QGuiApplication::platformName()=="offscreen") QSKIP("Requires the native Windows UI backend.");
+        POINT previous={}; GetPhysicalCursorPos(&previous); auto restoreCursor=qScopeGuard([&] { SetPhysicalCursorPos(previous.x,previous.y); });
+        QImage image(80,40,QImage::Format_RGB32); image.fill(Qt::white); { QPainter painter(&image); painter.fillRect(10,8,30,20,Qt::blue); }
+        QLabel target; target.setAlignment(Qt::AlignCenter); target.setPixmap(QPixmap::fromImage(image)); target.resize(image.size()); target.move(60,60); target.setWindowFlag(Qt::WindowStaysOnTopHint); target.show(); QTest::qWait(100);
+        POINT origin{0,0}; QVERIFY(ClientToScreen(reinterpret_cast<HWND>(target.winId()),&origin)); RECT client={}; GetClientRect(reinterpret_cast<HWND>(target.winId()),&client);
+        const double ratio=target.devicePixelRatioF(); const QSize size(qRound(80*ratio),qRound(40*ratio));
+        const QPoint begin(origin.x+(client.right-size.width())/2,origin.y+(client.bottom-size.height())/2),end=begin+QPoint(size.width()-1,size.height()-1);
+        Window w(nullptr,true); Step p; p.action=Action::IfImage; Script s; s.steps={p}; w.setScript(s); w.show();
+        StepEditor *editor=nullptr; for(auto *e:w.findChildren<StepEditor *>()) if(e->findChild<QComboBox *>("stepAction")) editor=e; QVERIFY(editor);
+        QTimer::singleShot(200,&w,[&] {
+            QVERIFY(qobject_cast<PositionPicker *>(QApplication::activeModalWidget())); QVERIFY(SetPhysicalCursorPos(begin.x(),begin.y())); INPUT press={}; press.type=INPUT_MOUSE; press.mi.dwFlags=MOUSEEVENTF_LEFTDOWN; QCOMPARE(SendInput(1,&press,sizeof(INPUT)),UINT(1));
+            QTimer::singleShot(80,&w,[&] { QVERIFY(SetPhysicalCursorPos(end.x(),end.y())); INPUT release={}; release.type=INPUT_MOUSE; release.mi.dwFlags=MOUSEEVENTF_LEFTUP; QCOMPARE(SendInput(1,&release,sizeof(INPUT)),UINT(1)); });
+        });
+        QTimer::singleShot(4000,&w,[&] { if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject(); });
+        editor->findChild<QPushButton *>("templateCapture")->click(); const QImage captured=QImage::fromData(w.currentScript().steps[0].templatePng,"PNG");
+        QVERIFY(!captured.isNull()); QCOMPARE(captured.size(),size); QCOMPARE(captured.pixelColor(0,0),QColor(Qt::white)); QCOMPARE(captured.pixelColor(qRound(20*ratio),qRound(15*ratio)),QColor(Qt::blue));
+        QVERIFY(w.isVisible()); QVERIFY(!w.property("captureInProgress").toBool()); w.close();
+    }
     void roundTrip() {
         Script s; for(int i=0;i<9;++i) { Step p; p.action=Action(i); s.steps.append(p); }
         s.steps.insert(8,Step{}); // Nonempty loop body.

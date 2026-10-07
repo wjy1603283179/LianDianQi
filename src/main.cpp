@@ -14,7 +14,7 @@
 
 int main(int argc,char **argv) {
     QApplication app(argc,argv); app.setQuitOnLastWindowClosed(true);
-    app.setApplicationName("LianDianQi"); app.setOrganizationName("DianXu"); app.setApplicationVersion("1.0.4");
+    app.setApplicationName("LianDianQi"); app.setOrganizationName("DianXu"); app.setApplicationVersion("1.1.0");
     const QString testSettings=qEnvironmentVariable("LIANDIANQI_TEST_SETTINGS");
     if(!testSettings.isEmpty()) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
